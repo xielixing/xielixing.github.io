@@ -5,6 +5,7 @@ draft = false
 summary = '用 BitFun × LoopX 的真实集成过程讲清 LoopX 的设计哲学：State Kernel 与 goal 的关系、heartbeat / monitor / gate / quota 这些概念如何协同、GitHub 上的人工操作如何回流成状态收敛，以及 heartbeat 对模型 API 限流的缓解作用。附一夜产出 16 个 PR 的实战数据与四个踩坑记录。'
 tags = ['loopx', 'agent', 'bitfun', 'state-kernel', 'automation']
 categories = ['Engineering']
+aliases = ['/posts/hello-world/']
 +++
 
 上周我给 [BitFun](https://github.com/GCWing/BitFun)（一个 Tauri 桌面端的 AI 编码工具）接入了 [LoopX](https://github.com/huangruiteng/loopx)，目标是一个听起来很朴素的功能：**在面板里勾选一批 issue，点一下启动，然后就不用管了**。
