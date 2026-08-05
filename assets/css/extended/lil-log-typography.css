@@ -1,11 +1,13 @@
 /* Typography aligned with lilianweng.github.io (Lil'Log).
    Same PaperMod theme; her fork predates the theme's 18px/40px scale-up,
-   so this file restores those older, denser values. Column widened to
-   800px (Lil'Log uses 720px; 800px reads better with 16px body text). */
+   so this file restores those older, denser values. Column set to 900px:
+   Lil'Log's text column is 720px, but her fixed logo hangs 138px outside
+   it, giving a ~900px visual footprint — matched here with a plain wider
+   centered column. */
 
 :root {
-  --main-width: 800px;
-  --article-width: 800px;
+  --main-width: 900px;
+  --article-width: 900px;
 }
 
 /* Body text: 16px/1.6 (theme now defaults to 18px). */
