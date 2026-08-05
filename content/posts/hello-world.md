@@ -1,6 +1,6 @@
 +++
 title = '在 BitFun 里嵌入 LoopX：让 Agent 持续修完一个仓库的 Issue'
-date = 2026-08-05T18:30:00+08:00
+date = 2026-08-05T14:30:00+08:00
 draft = false
 summary = '用 BitFun × LoopX 的真实集成过程讲清 LoopX 的设计哲学：State Kernel 与 goal 的关系、heartbeat / monitor / gate / quota 这些概念如何协同、GitHub 上的人工操作如何回流成状态收敛，以及 heartbeat 对模型 API 限流的缓解作用。附一夜产出 16 个 PR 的实战数据与四个踩坑记录。'
 tags = ['loopx', 'agent', 'bitfun', 'state-kernel', 'automation']
