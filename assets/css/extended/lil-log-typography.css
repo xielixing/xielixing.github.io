@@ -1,0 +1,84 @@
+/* Typography aligned with lilianweng.github.io (Lil'Log).
+   Same PaperMod theme; her fork predates the theme's 18px/40px scale-up,
+   so this file restores those older, denser values. Widths follow her
+   custom 720px main column (theme default is also 720px, kept explicit). */
+
+:root {
+  --main-width: 720px;
+  --article-width: 720px;
+}
+
+/* Body text: 16px/1.6 (theme now defaults to 18px). */
+body {
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+/* Post title: 36px vs theme's 40px. */
+.post-title {
+  font-size: 36px;
+}
+
+/* Content headings: her 28/24/18/16 scale vs theme's 40/32/24/16. */
+.post-content h1,
+.md-content h1 {
+  margin: 28px auto 20px;
+  font-size: 28px;
+}
+
+.post-content h2,
+.md-content h2 {
+  margin: 24px auto 16px;
+  font-size: 24px;
+}
+
+.post-content h3,
+.md-content h3 {
+  font-size: 18px;
+}
+
+.post-content h4,
+.md-content h4 {
+  font-size: 16px;
+}
+
+/* Inline code: compact 0.78em like hers. */
+.post-content code,
+.md-content code {
+  margin: auto 4px;
+  padding: 4px 6px;
+  font-size: 0.78em;
+  line-height: 1.5;
+}
+
+/* Code blocks keep their own size; hers renders ~0.78em too. */
+.post-content pre code,
+.md-content pre code {
+  font-size: 0.78em;
+}
+
+/* Blockquote: her tighter 3px rule. */
+.post-content blockquote,
+.md-content blockquote {
+  margin: 20px 0;
+  padding: 0 14px;
+  border-inline-start: 3px solid var(--primary);
+}
+
+/* Tables: readable at the smaller base size. */
+.post-content table,
+.md-content table {
+  margin-bottom: 32px;
+  font-size: 15px;
+}
+
+/* List front page: her 34px first-entry headline. */
+.first-entry .entry-header h1 {
+  font-size: 34px;
+  line-height: 1.3;
+}
+
+.entry-header h2 {
+  font-size: 24px;
+  line-height: 1.3;
+}
