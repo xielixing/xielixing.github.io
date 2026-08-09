@@ -328,3 +328,72 @@ WSL 进程 -> eth0(172.22.181.127) -> gateway(172.22.176.1) -> 外部网络
 如果是在一台真正的 Linux 机器上，拓扑可能不一样：`eth0` 可能对应真实有线网卡，Wi-Fi 可能叫 `wlan0`，服务器上可能有多张物理网卡、bond、bridge、veth、Docker 网桥等。容器里也经常看到虚拟网卡。名字和拓扑会变，但基本概念不变：进程通过网络接口、IP、路由表和网关访问网络。
 
 network namespace 要隔离的，正是这一整套网络视图：进程能看到哪些网卡、哪些 IP、哪些路由、有没有默认网关。一个沙箱如果不给进程 `eth0` 和 default route，它就算调用网络程序，也没有外网出口。
+
+## 5. Network namespace 里的空网络世界
+
+创建新的 network namespace：
+
+```bash
+unshare -Urn sh
+```
+
+这里 `-n` 表示创建 network namespace。进入里面后执行：
+
+```bash
+id
+ip -br addr
+ip route
+```
+
+实际输出：
+
+```text
+uid=0(root) gid=0(root) groups=0(root)
+lo               DOWN
+```
+
+`ip route` 没有任何输出。和外层网络相比，这个 namespace 里没有 `eth0`，没有外部 IP，也没有 default route；只有一个默认关闭的 `lo`。这说明 network namespace 隔离的是整套网络视图：网卡列表、IP 地址、路由表、默认网关。
+
+先把 loopback 启起来：
+
+```bash
+ip link set lo up
+ip -br addr
+ip route
+```
+
+实际输出：
+
+```text
+lo               UNKNOWN        127.0.0.1/8 ::1/128
+```
+
+`ip route` 仍然没有输出。此时再测试：
+
+```bash
+ping -c 1 127.0.0.1
+ping -c 1 8.8.8.8
+```
+
+实际结果：
+
+```text
+PING 127.0.0.1 (127.0.0.1) 56(84) bytes of data.
+64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time=1.46 ms
+
+--- 127.0.0.1 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+
+ping: connect: Network is unreachable
+```
+
+这说明里面的“自己访问自己”已经可用，但外网仍然不可达。原因不是 DNS、代理或 ping 程序的问题，而是当前 network namespace 里根本没有外网出口：没有 `eth0`，也没有默认网关。
+
+所以 network namespace 的直觉是：
+
+```text
+可以给进程一个独立的网络世界。
+这个世界里可以只有 lo，没有 eth0，没有 default route。
+```
+
+这就是沙箱断网的基础方式之一。它比“告诉程序不要联网”更硬，因为内核给这个进程的网络视图里压根没有通向外网的路。
