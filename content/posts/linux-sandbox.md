@@ -491,3 +491,105 @@ PID namespace 的直觉是：
 ```
 
 沙箱和容器会用它让进程只能看到自己这棵小进程树，而不是宿主机上的所有进程。配套挂载 `/proc` 很重要，因为很多进程工具看到的世界来自 `/proc`。
+
+## 7. Capabilities：root 权限被拆开了
+
+Linux 里的 root 权限不是一个不可分割的整体，而是拆成了一组 capabilities。比如挂载文件系统通常需要 `CAP_SYS_ADMIN`，修改网络配置通常需要 `CAP_NET_ADMIN`，调试别的进程可能需要 `CAP_SYS_PTRACE`。
+
+先看普通用户当前进程的 capability：
+
+```bash
+grep -E 'CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs' /proc/self/status
+```
+
+实际输出：
+
+```text
+CapInh: 0000000000000000
+CapPrm: 0000000000000000
+CapEff: 0000000000000000
+CapBnd: 000001ffffffffff
+CapAmb: 0000000000000000
+NoNewPrivs: 0
+```
+
+这里先看 `CapEff`，它表示当前真正生效的 capabilities。普通用户的 `CapEff` 是 0，所以直接挂载 tmpfs 会失败：
+
+```bash
+mkdir -p /tmp/cap-demo
+mount -t tmpfs tmpfs /tmp/cap-demo
+```
+
+实际输出：
+
+```text
+mount: /tmp/cap-demo: must be superuser to use mount.
+```
+
+进入 user namespace 后再看：
+
+```bash
+unshare -Ur sh
+id
+grep -E 'CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs' /proc/self/status
+```
+
+实际输出：
+
+```text
+uid=0(root) gid=0(root) groups=0(root)
+CapInh: 0000000000000000
+CapPrm: 000001ffffffffff
+CapEff: 000001ffffffffff
+CapBnd: 000001ffffffffff
+CapAmb: 0000000000000000
+NoNewPrivs: 0
+```
+
+这里 `CapEff` 变成了非 0，说明在这个 user namespace 里确实拥有很多 capability。但如果只创建 user namespace，不创建新的 mount namespace，再执行：
+
+```bash
+mount -t tmpfs tmpfs /tmp/cap-demo
+```
+
+实际仍然失败：
+
+```text
+mount: /tmp/cap-demo: permission denied.
+```
+
+这说明 capability 不是“无限 root 权力”。它有 namespace 边界：里面的 `CAP_SYS_ADMIN` 不能直接拿去修改外层真实系统的挂载视图。
+
+把 user namespace 和 mount namespace 配起来：
+
+```bash
+unshare -Ur -m sh
+id
+grep -E 'CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs' /proc/self/status
+mkdir -p /tmp/cap-demo
+mount -t tmpfs tmpfs /tmp/cap-demo
+findmnt /tmp/cap-demo
+umount /tmp/cap-demo
+```
+
+实际输出：
+
+```text
+uid=0(root) gid=0(root) groups=0(root)
+CapEff: 000001ffffffffff
+
+TARGET        SOURCE FSTYPE OPTIONS
+/tmp/cap-demo tmpfs  tmpfs  rw,relatime,uid=1000,gid=1000
+```
+
+这次挂载成功了，因为进程既拥有当前 user namespace 里的 capability，也拥有一个新的 mount namespace 可以被它修改。
+
+所以这一步的直觉是：
+
+```text
+普通用户：没有有效 capability，mount 失败。
+user namespace root：有里面的 capability，但不能随便改外层资源。
+user + mount namespace：有里面的 CAP_SYS_ADMIN，也有自己的挂载视图，mount 成功。
+```
+
+沙箱会利用这个组合：在小世界里给进程一些“看起来像 root 才能做”的能力，同时把这些能力限制在 namespace 边界内，不让它变成宿主系统的真实 root。
