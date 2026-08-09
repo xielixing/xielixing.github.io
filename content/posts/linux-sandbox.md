@@ -818,16 +818,16 @@ seccomp 决定进程还能调用哪些内核入口。
 
 这几项都能在 WSL2 里建立比较直观的认识。AppArmor/SELinux 更依赖发行版和内核配置，在当前 WSL 环境里不一定适合做第一轮手动实验。
 
-## 11. 一个 AI coding CLI 的 Linux 沙箱实现
+## 11. Claude Code 沙箱运行时的 Linux 实现
 
-看完这些内核机制之后，再看一个真实 AI coding CLI 的沙箱实现，就能更容易分清“产品能力”和“系统能力”的边界。
+看完这些内核机制之后，再看 [anthropic-experimental/sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime) 的实现，就能更容易分清“产品能力”和“系统能力”的边界。这个仓库发布的是 `@anthropic-ai/sandbox-runtime`，README 里说明它是为 Claude Code 沙箱能力开发的 research preview。
 
-这个实现没有从零手写所有 namespace、mount、seccomp 细节，而是接入了一个 sandbox runtime 包。CLI 自己主要做三件事：
+这个运行时没有从零发明沙箱机制，而是把 Linux/macOS 的系统能力包装成一个可复用的 CLI/库。接入方通常主要做三件事：
 
 ```text
 1. 把用户设置和权限规则转换成 sandbox runtime 配置
 2. 决定哪些 Bash 命令需要进沙箱
-3. 在执行命令前，把原始命令包装成 sandboxed command
+3. 在执行命令前，让 sandbox runtime 把原始命令包装成 sandboxed command
 ```
 
 整体链路大概是：
@@ -843,7 +843,7 @@ Bash 工具调用
 
 它对外暴露的沙箱能力可以分成几类：
 
-| CLI 能力 | 用户看到的效果 | 底层 Linux 能力 |
+| Claude Code 沙箱运行时能力 | 用户看到的效果 | 底层 Linux 能力 |
 | --- | --- | --- |
 | Bash 命令沙箱 | Bash 命令默认在受限环境中运行 | `bubblewrap` 创建隔离进程环境 |
 | 文件写限制 | 只能写 workspace、临时目录、额外授权目录 | mount namespace、bind mount、readonly mount |
