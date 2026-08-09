@@ -84,3 +84,16 @@ body {
   font-size: 24px;
   line-height: 1.3;
 }
+
+/* Home intro: PaperMod centers home-info inside a 320px block, which makes
+   a one-post homepage feel too tall. Lil'Log keeps the intro closer to the
+   header and lets the post list start in the upper half of the viewport. */
+.first-entry.home-info {
+  min-height: 210px;
+  margin: 18px 0 56px;
+}
+
+.home-info .entry-content p {
+  margin-block-start: 16px;
+  margin-block-end: 22px;
+}
