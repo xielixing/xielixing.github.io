@@ -843,17 +843,19 @@ Bash 工具调用
 
 它对外暴露的沙箱能力可以分成几类：
 
-| Claude Code 沙箱运行时能力 | 用户看到的效果 | 底层 Linux 能力 | 依赖的底层接口/机制 |
+| Claude Code 沙箱运行时能力 | 用户看到的效果 | 底层 Linux 能力 | 实际使用的程序/参数或内核接口 |
 | --- | --- | --- | --- |
-| Bash 命令沙箱 | Bash 命令默认在受限环境中运行 | `bubblewrap` 创建隔离进程环境 | `clone` / `unshare` 创建 namespace，最后 `execve` 执行真实命令 |
-| 文件写限制 | 只能写 workspace、临时目录、额外授权目录 | mount namespace、bind mount、readonly mount | `mount` / `bind mount` / remount readonly，配合路径白名单 |
-| 文件读限制 | 可以 deny 读敏感目录，再 allow 特定路径 | mount 规则和路径策略 | 在独立 mount namespace 里隐藏、替换或只读挂载路径 |
-| 网络默认拒绝 | 没授权域名就不能访问外网 | network namespace + host proxy | `CLONE_NEWNET` 隔离网络视图，代理进程在宿主侧转发 |
-| 域名 allow/deny | 只允许访问配置过的域名，deny 优先 | HTTP/HTTPS proxy + SOCKS5 proxy | 代理层解析目标域名，按 allow/deny 规则决定是否连接 |
-| Unix socket 阻断 | 防止进程走本地 socket 绕过网络沙箱 | seccomp BPF | `seccomp` / `prctl` 安装 BPF 过滤器，拦截 `socket(AF_UNIX, ...)` |
-| 临时目录隔离 | 沙箱命令使用受控 `$TMPDIR` | bind mount / tmpdir policy | 创建临时目录后用 bind mount 暴露给沙箱进程 |
+| Bash 命令沙箱 | Bash 命令默认在受限环境中运行 | `bubblewrap` 创建隔离进程环境 | 调用 `bwrap --new-session --die-with-parent ... -- <shell> -c <command>`；`bwrap` 内部再调用 Linux namespace / mount / exec 相关接口 |
+| 文件写限制 | 只能写 workspace、临时目录、额外授权目录 | mount namespace、bind mount、readonly mount | 生成 `bwrap --ro-bind / /`、`--bind <path> <path>`、`--ro-bind <path> <path>` 等参数；底层对应 `mount(2)` / bind mount / readonly remount |
+| 文件读限制 | 可以 deny 读敏感目录，再 allow 特定路径 | mount 规则和路径策略 | 生成 `bwrap --tmpfs <path>` 或 `--ro-bind /dev/null <path>` 等参数，把路径隐藏、替换或变成只读 |
+| 网络默认拒绝 | 没授权域名就不能访问外网 | network namespace + host proxy | 生成 `bwrap --unshare-net`；底层对应 `CLONE_NEWNET` 网络 namespace |
+| 域名 allow/deny | 只允许访问配置过的域名，deny 优先 | HTTP/HTTPS proxy + SOCKS5 proxy | 启动 `socat` 桥接 Unix socket 和沙箱内 `127.0.0.1:3128/1080`，并通过 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` 注入代理配置 |
+| Unix socket 阻断 | 防止进程走本地 socket 绕过网络沙箱 | seccomp BPF | 执行 `apply-seccomp <unix-block.bpf> <command>`；内部调用 `prctl(PR_SET_NO_NEW_PRIVS)`、`prctl(PR_SET_SECCOMP)`，过滤 `socket(AF_UNIX, ...)` |
+| 临时目录隔离 | 沙箱命令使用受控 `$TMPDIR` | bind mount / tmpdir policy | 创建受控临时目录，再通过 `bwrap --bind` 或 `--tmpfs` 暴露给沙箱进程 |
 | 违规提示 | 命令输出里能标记 sandbox violation | runtime violation store + CLI 展示层 | 不是内核能力，来自运行时记录和上层展示 |
 | 排除命令 | 某些命令可配置为不进沙箱 | CLI 策略层，不是内核安全边界 | 不是内核能力，属于执行前的策略判断 |
+
+这里要注意一层关系：Claude Code 沙箱运行时本身主要是在拼 `bwrap`、`socat`、`apply-seccomp` 这些命令和配置；真正调用 `mount(2)`、创建 namespace、安装 seccomp 过滤器的是这些底层工具和它们背后的内核接口。
 
 Linux 上比较关键的系统依赖是：
 
