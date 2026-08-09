@@ -936,6 +936,29 @@ Linux 上比较关键的二进制依赖是：
 
 seccomp 这里主要用于阻断 Unix domain socket 创建。原因是：即使外网被 network namespace 和代理限制了，本地 Unix socket 仍可能成为绕过路径。例如某些系统服务、Docker socket、agent socket 一旦暴露，权限可能比普通网络请求大得多。这个实现会带一个 `apply-seccomp` helper 和一个预生成的 `unix-block.bpf` 过滤器；运行时由 helper 调用内核接口安装 seccomp 规则，再 exec 真正的用户命令。
 
+这两个文件可以这样理解：
+
+```text
+apply-seccomp = seccomp 规则安装器，是可以执行的原生程序
+unix-block.bpf = seccomp 规则数据，不是可执行程序
+```
+
+它们解决的是同一个场景：防止沙箱里的命令通过本地 Unix domain socket 绕过网络沙箱。比如普通外网已经被 network namespace 切掉了，HTTP/HTTPS 访问也必须经过受控代理；但如果进程还能随便创建 Unix socket，它可能去连接 `/var/run/docker.sock`、SSH agent、GPG agent、系统服务 socket 或其他本地 agent socket。这类访问不一定经过域名 allow/deny 代理，因此可能变成绕过路径。
+
+所以 Linux 上会分两阶段处理：
+
+```text
+1. bwrap 先创建文件系统、网络、PID 等沙箱
+2. 如果需要代理，先在沙箱里启动 socat 桥接
+3. apply-seccomp 读取 unix-block.bpf
+4. apply-seccomp 把 BPF 规则安装到当前进程
+5. apply-seccomp execve 用户命令
+6. 用户命令继承 seccomp 限制
+7. 用户命令再调用 socket(AF_UNIX, ...) 时返回 EPERM
+```
+
+这里不能一开始就安装 `unix-block.bpf`，因为代理桥接用的 `socat` 自己也需要 Unix socket。先让 `socat` 启动，再用 `apply-seccomp` 给真正的用户命令加限制，才能同时保留受控代理能力，并阻断用户命令自己创建新的 Unix socket。
+
 把它和前面的手动实验对应起来：
 
 ```text
