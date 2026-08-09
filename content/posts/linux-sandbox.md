@@ -397,3 +397,97 @@ ping: connect: Network is unreachable
 ```
 
 这就是沙箱断网的基础方式之一。它比“告诉程序不要联网”更硬，因为内核给这个进程的网络视图里压根没有通向外网的路。
+
+## 6. PID namespace 和新的进程树
+
+PID namespace 隔离的是进程编号和进程树。先在外层看当前 shell：
+
+```bash
+echo "== outside pid baseline =="
+echo "shell pid: $$"
+ps -o pid,ppid,comm | head
+```
+
+实际输出：
+
+```text
+shell pid: 1786
+
+  PID  PPID COMMAND
+ 1786  1760 bash
+27314  1786 ps
+27315  1786 head
+```
+
+这里当前 shell 的 PID 是 `1786`，它的父进程是 `1760`。`ps` 和 `head` 是刚刚为了显示进程列表临时启动的子进程。
+
+创建新的 PID namespace：
+
+```bash
+unshare -Urpf sh
+```
+
+参数含义：
+
+```text
+-U  新 user namespace
+-r  当前用户映射成里面的 root
+-p  新 PID namespace
+-f  fork 一个子进程进入新 PID namespace
+```
+
+进入后执行：
+
+```bash
+echo "shell pid: $$"
+ps -o pid,ppid,comm
+```
+
+实际看到：
+
+```text
+shell pid: 1
+
+  PID  PPID COMMAND
+```
+
+`shell pid: 1` 说明当前 `sh` 在这个 PID namespace 里是 1 号进程，也就是这个小世界里的第一个进程。`ps` 只有表头，是因为 PID namespace 已经换了，但 `/proc` 还没有换成匹配这个 PID namespace 的 procfs。`ps` 主要靠读取 `/proc` 来列进程；如果 `/proc` 视图不配套，看到的结果就会不完整。
+
+退出后再用 `--mount-proc`：
+
+```bash
+unshare -Urpf --mount-proc sh
+```
+
+进入后执行：
+
+```bash
+echo "shell pid: $$"
+ps -o pid,ppid,comm
+ls -ld /proc/1
+readlink /proc/1/exe
+```
+
+实际输出：
+
+```text
+shell pid: 1
+
+  PID  PPID COMMAND
+    1     0 sh
+    2     1 ps
+
+dr-xr-xr-x 9 root root 0 Aug 9 14:57 /proc/1
+/usr/bin/dash
+```
+
+这次 `ps` 可以正确看到 namespace 里的进程树：`sh` 是 PID 1，`ps` 是它启动的子进程。`/proc/1/exe` 指向 `/usr/bin/dash`，说明这里的 `sh` 实际由 dash 提供。
+
+PID namespace 的直觉是：
+
+```text
+同一个进程，在外面有外面的 PID；
+在新的 PID namespace 里，又有里面的 PID。
+```
+
+沙箱和容器会用它让进程只能看到自己这棵小进程树，而不是宿主机上的所有进程。配套挂载 `/proc` 很重要，因为很多进程工具看到的世界来自 `/proc`。
