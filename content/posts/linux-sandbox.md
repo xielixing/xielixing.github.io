@@ -110,3 +110,74 @@ x  可以进入或穿过这个目录，访问里面的路径
 ls -ld /root   看门牌，可以
 ls /root       进门看房间，不行
 ```
+
+## 2. User namespace 里的 root
+
+接下来创建一个新的 user namespace：
+
+```bash
+unshare -Ur sh
+```
+
+`-U` 表示创建 user namespace，`-r` 表示把当前用户映射成 namespace 里的 root。进入新 shell 后执行：
+
+```bash
+echo "== inside user namespace =="
+id
+cat /proc/self/uid_map
+cat /proc/self/gid_map
+```
+
+实际输出：
+
+```text
+== inside user namespace ==
+uid=0(root) gid=0(root) groups=0(root)
+         0       1000          1
+         0       1000          1
+```
+
+这两张映射表的意思是：
+
+```text
+namespace 里的 uid 0  <->  外面宿主的 uid 1000
+namespace 里的 gid 0  <->  外面宿主的 gid 1000
+只映射 1 个 ID
+```
+
+也就是说，在这个小世界里，当前进程看起来是 root；但在外面的宿主系统里，它仍然只是 `sandboxer`。
+
+再看 `/root`：
+
+```bash
+ls -ld /root
+ls /root
+```
+
+实际输出：
+
+```text
+drwx------ 10 nobody nogroup 4096 Aug 9 11:11 /root
+ls: cannot open directory '/root': Permission denied
+```
+
+这里最有意思的是 owner/group 从外面的 `root root` 变成了里面的 `nobody nogroup`。这不是 `/root` 真的被改了归属，而是当前 user namespace 里没有外部 `uid=0/gid=0` 的映射。namespace 只认识外部 `1000`，并把它显示成内部 `0(root)`；外部真正的 root 无法在这个 namespace 里表示，于是显示成 `nobody/nogroup`。
+
+所以这三件事并不矛盾：
+
+```text
+id 显示 uid=0(root)
+/root 显示 nobody nogroup
+ls /root 仍然 Permission denied
+```
+
+一句话直觉：你是“这个小世界里的 root”，不是“外面真实系统的 root”。`unshare -Ur` 不是让普通用户攻破系统，而是创建了一个新的身份空间，把普通用户映射成里面的 root，同时不授予外部 root 的权力。
+
+顺便拆一下 `ls -ld /root` 的完整输出：
+
+```text
+drwx------  10  nobody  nogroup  4096  Aug 9 11:11  /root
+权限        链接数 owner   group    大小   修改时间       路径
+```
+
+其中 `10` 是 link count。对目录来说，可以粗略理解为 `2 + 直接子目录数量`，不是权限。`4096` 是目录本身占用的字节数；目录也是一种特殊文件，里面保存“文件名到 inode”的映射，4096 通常是一个文件系统块大小。当前实验里，真正影响访问判断的是权限和 owner/group。
