@@ -817,3 +817,81 @@ seccomp 决定进程还能调用哪些内核入口。
 ```
 
 这几项都能在 WSL2 里建立比较直观的认识。AppArmor/SELinux 更依赖发行版和内核配置，在当前 WSL 环境里不一定适合做第一轮手动实验。
+
+## 11. 一个 AI coding CLI 的 Linux 沙箱实现
+
+看完这些内核机制之后，再看一个真实 AI coding CLI 的沙箱实现，就能更容易分清“产品能力”和“系统能力”的边界。
+
+这个实现没有从零手写所有 namespace、mount、seccomp 细节，而是接入了一个 sandbox runtime 包。CLI 自己主要做三件事：
+
+```text
+1. 把用户设置和权限规则转换成 sandbox runtime 配置
+2. 决定哪些 Bash 命令需要进沙箱
+3. 在执行命令前，把原始命令包装成 sandboxed command
+```
+
+整体链路大概是：
+
+```text
+Bash 工具调用
+  -> 判断是否启用沙箱
+  -> 构造文件/网络/临时目录配置
+  -> sandbox runtime 包装命令
+  -> Linux: bubblewrap + proxy + seccomp
+  -> 执行真正的 bash command
+```
+
+它对外暴露的沙箱能力可以分成几类：
+
+| CLI 能力 | 用户看到的效果 | 底层 Linux 能力 |
+| --- | --- | --- |
+| Bash 命令沙箱 | Bash 命令默认在受限环境中运行 | `bubblewrap` 创建隔离进程环境 |
+| 文件写限制 | 只能写 workspace、临时目录、额外授权目录 | mount namespace、bind mount、readonly mount |
+| 文件读限制 | 可以 deny 读敏感目录，再 allow 特定路径 | mount 规则和路径策略 |
+| 网络默认拒绝 | 没授权域名就不能访问外网 | network namespace + host proxy |
+| 域名 allow/deny | 只允许访问配置过的域名，deny 优先 | HTTP/HTTPS proxy + SOCKS5 proxy |
+| Unix socket 阻断 | 防止进程走本地 socket 绕过网络沙箱 | seccomp BPF |
+| 临时目录隔离 | 沙箱命令使用受控 `$TMPDIR` | bind mount / tmpdir policy |
+| 违规提示 | 命令输出里能标记 sandbox violation | runtime violation store + CLI 展示层 |
+| 排除命令 | 某些命令可配置为不进沙箱 | CLI 策略层，不是内核安全边界 |
+
+Linux 上比较关键的系统依赖是：
+
+```text
+bubblewrap / bwrap
+socat
+ripgrep / rg
+seccomp helper + BPF filter
+```
+
+其中 `bubblewrap` 是最核心的容器化工具。它负责把前面实验过的能力组合起来：创建 namespace、配置 bind mount、把某些路径变成只读、隔离网络视图等。
+
+`socat` 用在网络代理桥接上。这个实现不是简单地把沙箱网络完全打开，而是让沙箱进程通过受控代理访问网络。Linux 上网络请求会通过 Unix domain socket 走到宿主侧代理，再由代理根据 allow/deny 域名规则决定是否放行。
+
+`ripgrep` 不是沙箱内核能力，而是辅助工具。它用于快速扫描一些危险路径或 deny path，帮助 runtime 在构造 mount 规则时找到需要保护的文件。
+
+seccomp 这里主要用于阻断 Unix domain socket 创建。原因是：即使外网被 network namespace 和代理限制了，本地 Unix socket 仍可能成为绕过路径。例如某些系统服务、Docker socket、agent socket 一旦暴露，权限可能比普通网络请求大得多。这个实现会带一个 `apply-seccomp` helper 和一个预生成的 `unix-block.bpf` 过滤器；运行时由 helper 调用内核接口安装 seccomp 规则，再 exec 真正的用户命令。
+
+把它和前面的手动实验对应起来：
+
+```text
+文件系统可见性  -> mount namespace / bind mount / readonly mount
+网络是否可达    -> network namespace / proxy / domain allowlist
+本地 IPC 绕过   -> seccomp 阻断 Unix socket
+命令是否进沙箱  -> CLI 策略层
+路径是否可写    -> allowWrite / denyWrite 转 mount 策略
+路径是否可读    -> denyRead / allowRead 转 mount 策略
+```
+
+所以真实产品里的 Linux 沙箱并不是单点机制，而是组合拳：
+
+```text
+namespace 改变进程看到的世界
+mount 策略控制文件系统可见性和可写性
+network namespace 切断默认外网
+proxy 把允许的网络访问重新接回来
+seccomp 堵住 Unix socket 这类本地绕过
+CLI 权限层决定什么时候启用、什么时候提示、什么时候允许例外
+```
+
+这个分层也解释了为什么“沙箱能力”看起来像产品功能，实际依赖的是操作系统能力。产品代码负责把权限意图翻译成配置；真正执行拒绝和隔离的，还是 Linux 内核和围绕它的工具链。
