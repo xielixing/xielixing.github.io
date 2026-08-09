@@ -843,17 +843,17 @@ Bash 工具调用
 
 它对外暴露的沙箱能力可以分成几类：
 
-| Claude Code 沙箱运行时能力 | 用户看到的效果 | 底层 Linux 能力 |
-| --- | --- | --- |
-| Bash 命令沙箱 | Bash 命令默认在受限环境中运行 | `bubblewrap` 创建隔离进程环境 |
-| 文件写限制 | 只能写 workspace、临时目录、额外授权目录 | mount namespace、bind mount、readonly mount |
-| 文件读限制 | 可以 deny 读敏感目录，再 allow 特定路径 | mount 规则和路径策略 |
-| 网络默认拒绝 | 没授权域名就不能访问外网 | network namespace + host proxy |
-| 域名 allow/deny | 只允许访问配置过的域名，deny 优先 | HTTP/HTTPS proxy + SOCKS5 proxy |
-| Unix socket 阻断 | 防止进程走本地 socket 绕过网络沙箱 | seccomp BPF |
-| 临时目录隔离 | 沙箱命令使用受控 `$TMPDIR` | bind mount / tmpdir policy |
-| 违规提示 | 命令输出里能标记 sandbox violation | runtime violation store + CLI 展示层 |
-| 排除命令 | 某些命令可配置为不进沙箱 | CLI 策略层，不是内核安全边界 |
+| Claude Code 沙箱运行时能力 | 用户看到的效果 | 底层 Linux 能力 | 依赖的底层接口/机制 |
+| --- | --- | --- | --- |
+| Bash 命令沙箱 | Bash 命令默认在受限环境中运行 | `bubblewrap` 创建隔离进程环境 | `clone` / `unshare` 创建 namespace，最后 `execve` 执行真实命令 |
+| 文件写限制 | 只能写 workspace、临时目录、额外授权目录 | mount namespace、bind mount、readonly mount | `mount` / `bind mount` / remount readonly，配合路径白名单 |
+| 文件读限制 | 可以 deny 读敏感目录，再 allow 特定路径 | mount 规则和路径策略 | 在独立 mount namespace 里隐藏、替换或只读挂载路径 |
+| 网络默认拒绝 | 没授权域名就不能访问外网 | network namespace + host proxy | `CLONE_NEWNET` 隔离网络视图，代理进程在宿主侧转发 |
+| 域名 allow/deny | 只允许访问配置过的域名，deny 优先 | HTTP/HTTPS proxy + SOCKS5 proxy | 代理层解析目标域名，按 allow/deny 规则决定是否连接 |
+| Unix socket 阻断 | 防止进程走本地 socket 绕过网络沙箱 | seccomp BPF | `seccomp` / `prctl` 安装 BPF 过滤器，拦截 `socket(AF_UNIX, ...)` |
+| 临时目录隔离 | 沙箱命令使用受控 `$TMPDIR` | bind mount / tmpdir policy | 创建临时目录后用 bind mount 暴露给沙箱进程 |
+| 违规提示 | 命令输出里能标记 sandbox violation | runtime violation store + CLI 展示层 | 不是内核能力，来自运行时记录和上层展示 |
+| 排除命令 | 某些命令可配置为不进沙箱 | CLI 策略层，不是内核安全边界 | 不是内核能力，属于执行前的策略判断 |
 
 Linux 上比较关键的系统依赖是：
 
