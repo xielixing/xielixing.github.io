@@ -857,7 +857,29 @@ Bash 工具调用
 
 这里要注意一层关系：Claude Code 沙箱运行时本身主要是在拼 `bwrap`、`socat`、`apply-seccomp` 这些命令和配置；真正调用 `mount(2)`、创建 namespace、安装 seccomp 过滤器的是这些底层工具和它们背后的内核接口。
 
-再具体一点，`bwrap` 这层大概会落到几类 Linux 接口：
+再具体一点，这里分了三层：
+
+```text
+sandbox-runtime: TypeScript 代码，负责拼命令参数
+bwrap: Linux 上安装的原生可执行程序，负责真正创建沙箱
+Linux kernel: 提供 namespace、mount、seccomp、exec 等系统调用
+```
+
+也就是说，TypeScript 本身没有直接调用 `clone(2)` / `mount(2)` 这些 C 风格系统调用。它通常只是通过 Node/Bun 的 `child_process.spawn` 启动一个外部命令：
+
+```ts
+spawn("bwrap", [
+  "--unshare-net",
+  "--ro-bind", "/", "/",
+  "--bind", workspace, workspace,
+  "--",
+  "bash", "-c", command,
+])
+```
+
+然后 `bwrap` 这个原生程序再去调用 Linux 内核接口。`clone(2)`、`unshare(2)`、`mount(2)`、`execve(2)` 里的 `(2)` 是 man page 的分区编号，意思是“系统调用”，不是函数参数。
+
+`bwrap` 背后大概会落到几类 Linux 接口：
 
 | 类型 | 典型接口 | 在这里的作用 |
 | --- | --- | --- |
