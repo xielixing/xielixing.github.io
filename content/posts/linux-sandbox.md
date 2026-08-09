@@ -868,6 +868,34 @@ Bash 工具调用
 
 所以从依赖角度看，业务代码依赖的是 `bwrap` 这个用户态程序；`bwrap` 再依赖 Linux 内核支持 namespace、mount、procfs、tmpfs 和进程执行这些能力。如果目标系统没有这些内核接口，就不能直接平移 `bwrap` 这套实现，只能找等价的进程隔离、文件视图隔离和网络隔离能力。
 
+调用链可以粗略理解成这样：
+
+```text
+Claude Code / sandbox runtime
+  -> spawn("bwrap", ["--unshare-net", "--ro-bind", "/", "/", "--bind", workspace, workspace, "--", "bash", "-c", command])
+  -> bwrap 进程启动
+  -> bwrap 调用 unshare/clone 创建新的 namespace
+  -> bwrap 调用 mount 配置只读根目录、可写 workspace、tmpfs、/proc、/dev
+  -> bwrap 设置环境变量和工作目录
+  -> bwrap 最后 execve("bash", ["bash", "-c", command], env)
+```
+
+如果不用 `bwrap`，直接写 C 代码，形状大概会是：
+
+```c
+unshare(CLONE_NEWNS | CLONE_NEWNET);
+mount("/", "/", NULL, MS_BIND | MS_REC, NULL);
+mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY | MS_BIND | MS_REC, NULL);
+mount(workspace, workspace, NULL, MS_BIND, NULL);
+mount("proc", "/proc", "proc", 0, NULL);
+clone(child_fn, child_stack, CLONE_NEWPID | SIGCHLD, NULL);
+
+// child_fn 里再执行真实命令
+execve("/bin/bash", argv, envp);
+```
+
+这段不是 `bwrap` 的真实源码，只是帮助理解调用顺序：先隔离视图，再重新布置文件系统，再创建要运行命令的子进程，最后执行用户命令。`seccomp` 那部分则是另一条链路：`apply-seccomp` 先调用 `prctl(PR_SET_NO_NEW_PRIVS)`，再调用 `prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog)`，最后 `execve` 用户命令。
+
 Linux 上比较关键的系统依赖是：
 
 ```text
