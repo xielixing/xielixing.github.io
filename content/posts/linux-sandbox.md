@@ -181,3 +181,81 @@ drwx------  10  nobody  nogroup  4096  Aug 9 11:11  /root
 ```
 
 其中 `10` 是 link count。对目录来说，可以粗略理解为 `2 + 直接子目录数量`，不是权限。`4096` 是目录本身占用的字节数；目录也是一种特殊文件，里面保存“文件名到 inode”的映射，4096 通常是一个文件系统块大小。当前实验里，真正影响访问判断的是权限和 owner/group。
+
+## 3. Mount namespace 和临时挂载
+
+如果 user namespace 改变的是“进程怎么看用户身份”，mount namespace 改变的就是“进程怎么看文件系统挂载表”。
+
+Linux 的目录树不是单一硬盘目录。很多不同来源的文件系统可以被挂到同一棵目录树上，比如 `/proc` 通常是 procfs，`/tmp` 下面也可以挂一个临时的 tmpfs。`mount` 可以理解成把一个文件系统接到某个目录点上；`findmnt` 用来查看当前进程能看到的挂载关系。
+
+先在外面确认没有挂载：
+
+```bash
+findmnt /tmp/sbox-demo || echo "outside: no mount yet"
+ls -ld /tmp/sbox-demo 2>/dev/null || echo "outside: no directory yet"
+```
+
+实际输出：
+
+```text
+outside: no mount yet
+outside: no directory yet
+```
+
+然后创建新的 user namespace 和 mount namespace：
+
+```bash
+unshare -Ur -m sh
+```
+
+这里 `-m` 表示创建 mount namespace。进入里面后执行：
+
+```bash
+mkdir -p /tmp/sbox-demo
+mount -t tmpfs tmpfs /tmp/sbox-demo
+touch /tmp/sbox-demo/inside.txt
+findmnt /tmp/sbox-demo
+ls -la /tmp/sbox-demo
+```
+
+实际输出：
+
+```text
+TARGET          SOURCE FSTYPE OPTIONS
+/tmp/sbox-demo tmpfs  tmpfs  rw,relatime,uid=1000,gid=1000
+
+total 4
+drwxrwxrwt 2 root   root      60 Aug 9 13:18 .
+drwxrwxrwt 9 nobody nogroup 4096 Aug 9 13:18 ..
+-rw-rw-r-- 1 root   root       0 Aug 9 13:18 inside.txt
+```
+
+这说明在当前 namespace 的挂载表里，`/tmp/sbox-demo` 已经变成一个 tmpfs 挂载点。`inside.txt` 写进的是这个临时文件系统，而不是外面原来的 `/tmp` 目录。
+
+退出 namespace 后再看：
+
+```bash
+exit
+findmnt /tmp/sbox-demo || echo "outside: no mount"
+ls -la /tmp/sbox-demo 2>/dev/null || echo "outside: no directory"
+```
+
+实际输出：
+
+```text
+outside: no mount
+
+total 8
+drwxr-xr-x 2 sandboxer sandboxer 4096 Aug 9 13:18 .
+drwxrwxrwt 9 root      root      4096 Aug 9 13:33 ..
+```
+
+这里有一个很好的细节：`/tmp/sbox-demo` 这个目录壳还在，因为 `mkdir -p /tmp/sbox-demo` 创建的是底层 `/tmp` 里的普通目录；但 `inside.txt` 不见了，因为它是在 namespace 里面挂上的 tmpfs 里创建的。退出后，外面的挂载表里没有这个 tmpfs，自然也看不到 tmpfs 里的文件。
+
+所以 mount namespace 的直觉是：
+
+```text
+不同进程可以拥有不同的文件系统挂载视图。
+```
+
+沙箱会大量利用这一点：给进程一个假的 `/tmp`，把系统目录挂成只读，只挂入允许访问的 workspace，不把真实的 `~/.ssh`、token、配置目录暴露进去。它不只是“改权限”，而是先改变进程能看见哪一棵文件系统树。
