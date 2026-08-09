@@ -857,6 +857,17 @@ Bash 工具调用
 
 这里要注意一层关系：Claude Code 沙箱运行时本身主要是在拼 `bwrap`、`socat`、`apply-seccomp` 这些命令和配置；真正调用 `mount(2)`、创建 namespace、安装 seccomp 过滤器的是这些底层工具和它们背后的内核接口。
 
+再具体一点，`bwrap` 这层大概会落到几类 Linux 接口：
+
+| 类型 | 典型接口 | 在这里的作用 |
+| --- | --- | --- |
+| namespace | `clone(2)` / `unshare(2)`，配合 `CLONE_NEWNS`、`CLONE_NEWNET`、`CLONE_NEWPID` 等 flag | 创建新的 mount、network、PID 视图，让沙箱进程看到的文件挂载、网络、进程树和宿主不同 |
+| mount | `mount(2)` / bind mount / remount readonly，必要时配合 `pivot_root(2)` 或类似根目录切换手段 | 把宿主路径按规则重新挂进沙箱：有的可写，有的只读，有的用 tmpfs 或 `/dev/null` 替换 |
+| exec | `fork(2)` / `clone(2)` 创建子进程，最后 `execve(2)` 执行 shell 或真实命令 | 沙箱环境准备好之后，把当前进程替换成用户要跑的 Bash 命令 |
+| proc/dev | `mount(2)` 挂载新的 `/proc`，`bwrap --dev /dev` 准备受控设备目录 | 避免沙箱进程直接看到宿主完整 `/proc`，同时提供基本设备文件 |
+
+所以从依赖角度看，业务代码依赖的是 `bwrap` 这个用户态程序；`bwrap` 再依赖 Linux 内核支持 namespace、mount、procfs、tmpfs 和进程执行这些能力。如果目标系统没有这些内核接口，就不能直接平移 `bwrap` 这套实现，只能找等价的进程隔离、文件视图隔离和网络隔离能力。
+
 Linux 上比较关键的系统依赖是：
 
 ```text
