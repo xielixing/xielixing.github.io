@@ -776,3 +776,44 @@ seccomp 决定进程还能调用哪些内核入口。
 ```
 
 如果前面的 network namespace 是“这个世界里没有外网网卡”，那么 seccomp 禁 `socket/connect` 更像是“即使你看得到网络相关对象，也不允许你调用创建连接的内核入口”。真实沙箱通常会组合使用这些机制，而不是只依赖某一个。
+
+## 10. 后续还需要补齐的沙箱能力
+
+到这里已经看过了几块最核心的隔离和权限机制：
+
+```text
+身份视图      user namespace
+文件系统视图  mount namespace
+网络视图      network namespace
+进程树视图    PID namespace
+特权拆分      capabilities
+防提权开关    no_new_privs
+系统调用过滤  seccomp
+```
+
+但一个可用的命令执行沙箱通常还会继续补几类能力：
+
+| 能力 | 解决的问题 | 后续实验直觉 |
+| --- | --- | --- |
+| rlimit / `ulimit` | 限制单进程或当前 shell 派生进程的资源 | 把 `open files` 调小，然后打开很多文件，看到 `Too many open files` |
+| cgroup v2 | 限制一组进程的 CPU、内存、进程数、IO | 把进程放进自己的 cgroup，观察 `memory.max`、`pids.max` 这类硬限制 |
+| `chroot` / `pivot_root` | 改变进程看到的根目录 | 让进程以一个临时目录为 `/`，理解为什么单独 `chroot` 不等于强沙箱 |
+| bind mount / readonly mount | 精确决定哪些目录可见、哪些只读 | 只把 workspace 挂进去，把系统目录挂成只读 |
+| tmpfs | 提供临时、退出即丢的可写空间 | 给沙箱一个假的 `/tmp` 或临时 home |
+| Landlock | 普通进程主动给自己加文件访问限制 | 不靠 root，让进程声明“只能读写这些路径” |
+| LSM: AppArmor / SELinux | 系统级强制访问控制 | 在支持的发行版上，用 profile/label 限制文件、网络和能力 |
+| 超时和进程回收 | 防止命令无限运行或遗留后台进程 | 给命令加 timeout，结束时清理整个进程组/cgroup |
+| 环境变量和 secret 隔离 | 防止 token、SSH key、配置泄漏 | 启动命令前清理环境变量，不挂载敏感目录 |
+| 组合策略 | 把单点机制变成真正沙箱 | namespace 改视图，mount 控文件，cgroup 控资源，seccomp 控 syscall，no_new_privs 防提权 |
+
+接下来最适合继续手动实验的是：
+
+```text
+1. rlimit / ulimit
+2. cgroup v2
+3. chroot 和为什么它不够
+4. bind mount + readonly mount
+5. Landlock
+```
+
+这几项都能在 WSL2 里建立比较直观的认识。AppArmor/SELinux 更依赖发行版和内核配置，在当前 WSL 环境里不一定适合做第一轮手动实验。
