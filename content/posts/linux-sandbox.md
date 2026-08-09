@@ -683,3 +683,96 @@ Seccomp_filters: 0
 ```
 
 沙箱会在启动不可信命令前打开它。这样即使子进程执行了 setuid 程序或带文件 capability 的程序，也不能借机获得比当前更多的权限。
+
+## 9. Seccomp：限制系统调用
+
+前面的机制更多是在回答“进程处在哪个世界里”：
+
+```text
+user namespace    身份视图
+mount namespace   文件系统挂载视图
+network namespace 网络视图
+PID namespace     进程树视图
+capabilities      在 namespace 边界内拥有哪些特权
+no_new_privs      子进程不能再获得新权限
+```
+
+seccomp 关注的是另一件事：这个进程还能向内核发起哪些 syscall。
+
+普通程序并不是直接操作硬件或文件系统。它要读文件、开 socket、创建进程、挂载文件系统，本质上都要通过 syscall 进入内核。例如：
+
+```text
+openat   打开文件
+read     读取文件
+write    写文件或终端
+socket   创建网络 socket
+connect  发起网络连接
+clone    创建线程或进程
+mount    挂载文件系统
+ptrace   调试/控制其他进程
+```
+
+seccomp 就是在 syscall 入口处加过滤器。过滤器可以决定：
+
+```text
+允许这个 syscall
+返回 EPERM / ENOSYS 之类的错误
+直接杀死进程
+记录日志或通知 supervisor
+```
+
+当前 shell 的状态可以这样看：
+
+```bash
+grep -E 'NoNewPrivs|Seccomp|Seccomp_filters' /proc/self/status
+```
+
+实验环境里的基线是：
+
+```text
+NoNewPrivs: 0
+Seccomp: 0
+Seccomp_filters: 0
+```
+
+这只表示当前 shell 没有安装 seccomp 过滤器，不表示内核不支持 seccomp。
+
+一个典型的最小实验是：安装一个 seccomp 过滤器，专门拒绝 `getpid` syscall。安装前：
+
+```text
+getpid() -> 返回当前进程 PID
+```
+
+安装后：
+
+```text
+getpid() -> -1, errno = EPERM
+```
+
+这个实验的价值在于它足够安全：`getpid` 不会改文件、不联网、不杀进程；但它能证明 seccomp 的控制点不在文件权限、不在 namespace，而在 syscall 入口。
+
+更接近真实沙箱的规则通常不会禁 `getpid`，而是限制危险 syscall，例如：
+
+```text
+mount      禁止进程重新挂载文件系统
+ptrace     禁止调试/注入其他进程
+bpf        禁止加载 eBPF 程序
+keyctl     禁止访问内核 keyring
+reboot     禁止重启系统
+setns      禁止加入其他 namespace
+unshare    禁止再创建新的 namespace
+socket     禁止创建网络 socket
+connect    禁止主动连接外部地址
+```
+
+seccomp 和 `no_new_privs` 经常一起出现。原因是：如果一个普通进程想在不提权的前提下安装 seccomp 过滤器，通常需要先打开 `no_new_privs`。这样内核知道这个进程链之后不会通过 setuid 或文件 capability 获得新权限，安装 syscall 限制才不会被绕成提权路径。
+
+所以 seccomp 的直觉是：
+
+```text
+namespace 决定进程看到哪个世界；
+capabilities 决定进程在这个世界里有什么特权；
+seccomp 决定进程还能调用哪些内核入口。
+```
+
+如果前面的 network namespace 是“这个世界里没有外网网卡”，那么 seccomp 禁 `socket/connect` 更像是“即使你看得到网络相关对象，也不允许你调用创建连接的内核入口”。真实沙箱通常会组合使用这些机制，而不是只依赖某一个。
