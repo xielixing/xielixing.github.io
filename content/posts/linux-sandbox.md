@@ -918,14 +918,15 @@ execve("/bin/bash", argv, envp);
 
 这段不是 `bwrap` 的真实源码，只是帮助理解调用顺序：先隔离视图，再重新布置文件系统，再创建要运行命令的子进程，最后执行用户命令。`seccomp` 那部分则是另一条链路：`apply-seccomp` 先调用 `prctl(PR_SET_NO_NEW_PRIVS)`，再调用 `prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog)`，最后 `execve` 用户命令。
 
-Linux 上比较关键的系统依赖是：
+Linux 上比较关键的二进制依赖是：
 
-```text
-bubblewrap / bwrap
-socat
-ripgrep / rg
-seccomp helper + BPF filter
-```
+| 二进制 / 文件 | 来源 | sandbox-runtime 怎么用 | 依赖的系统接口 |
+| --- | --- | --- | --- |
+| `bwrap` / `bubblewrap` | Linux 发行版包，一般通过 `apt install bubblewrap`、`dnf install bubblewrap`、`pacman -S bubblewrap` 安装 | 由 TS 层拼参数并 `spawn("bwrap", args)`；负责创建命令沙箱 | namespace: `clone(2)` / `unshare(2)`；mount: `mount(2)` / bind mount / readonly remount；process: `fork(2)` / `clone(2)` / `execve(2)`；还会使用 procfs、tmpfs、`/dev` 相关挂载能力 |
+| `socat` | Linux 发行版包，一般通过 `apt install socat`、`dnf install socat`、`pacman -S socat` 安装 | 在宿主和沙箱之间做 Unix socket / TCP 代理桥接，让沙箱里的 HTTP/SOCKS 代理请求转到宿主侧代理 | socket API: `socket(2)`、`bind(2)`、`listen(2)`、`accept(2)`、`connect(2)`、`read(2)` / `write(2)`；会用到 Unix domain socket 和 TCP socket |
+| `rg` / `ripgrep` | Linux 发行版包或已有系统工具 | 辅助扫描 deny path / 危险路径，帮助生成 mount 规则；它不是沙箱边界本身 | 普通文件系统接口，如 `open(2)`、`read(2)`、`stat(2)`、目录遍历等 |
+| `apply-seccomp` | `@anthropic-ai/sandbox-runtime` 包内 vendor 自带的原生二进制，位于 `vendor/seccomp/<arch>/apply-seccomp` | 在执行用户命令前安装 seccomp 过滤器，然后再 `execve` 用户命令 | `prctl(PR_SET_NO_NEW_PRIVS)`、`prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog)`、`execve(2)` |
+| `unix-block.bpf` | `@anthropic-ai/sandbox-runtime` 包内 vendor 自带的预生成 BPF 过滤器，位于 `vendor/seccomp/<arch>/unix-block.bpf` | 作为 seccomp filter 数据传给 `apply-seccomp`，用于阻断 Unix socket 创建 | 不是可执行程序；它是给 seccomp 使用的 BPF 规则，目标是让 `socket(AF_UNIX, ...)` 返回 `EPERM` |
 
 其中 `bubblewrap` 是最核心的容器化工具。它负责把前面实验过的能力组合起来：创建 namespace、配置 bind mount、把某些路径变成只读、隔离网络视图等。
 
