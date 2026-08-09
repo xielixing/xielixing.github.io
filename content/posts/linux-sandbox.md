@@ -56,3 +56,57 @@ others  其他所有人
 ```
 
 下一步要观察的第一件事，是普通用户为什么不能读取 root 的私有目录。这会把“uid/gid 决定基础权限”的直觉先钉住，然后再进入 user namespace。
+
+## 1. 普通用户访问 root 私有目录
+
+先看 `/root` 目录本身：
+
+```bash
+ls -ld /root
+```
+
+输出类似：
+
+```text
+drwx------ 10 root root 4096 Aug 9 11:11 /root
+```
+
+这里 `ls -ld /root` 的含义是：用详细格式查看 `/root` 这个目录本身，而不是展开它里面的内容。`-l` 是 long format，显示权限、owner、group、大小、时间等信息；`-d` 是 directory itself，只看目录本身。
+
+权限字段可以拆成：
+
+```text
+d   rwx   ---   ---
+    owner group others
+```
+
+后面的 `root root` 分别表示 owner 是 `root` 用户，group 是 `root` 用户组。所以这行的意思是：`/root` 是一个目录，只有 owner `root` 有读、写、进入权限；group 和 others 都没有权限。
+
+再尝试展开目录内容：
+
+```bash
+ls /root
+```
+
+实际结果：
+
+```text
+ls: cannot open directory '/root': Permission denied
+```
+
+这一步失败不是 `ls` 程序自己决定的，而是内核根据当前进程的身份和 `/root` 的权限拒绝了它。当前进程是 `uid=1000(sandboxer)`，不是 owner `root`，也没有命中可用的 group 权限，最后只能落到 others；但 `/root` 的 others 权限是 `---`。
+
+目录上的 `rwx` 和普通文件略有不同：
+
+```text
+r  可以列出目录里的文件名
+w  可以在目录里创建、删除、改名文件
+x  可以进入或穿过这个目录，访问里面的路径
+```
+
+所以可以把这一步理解成：
+
+```text
+ls -ld /root   看门牌，可以
+ls /root       进门看房间，不行
+```
