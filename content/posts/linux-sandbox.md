@@ -593,3 +593,93 @@ user + mount namespace：有里面的 CAP_SYS_ADMIN，也有自己的挂载视�
 ```
 
 沙箱会利用这个组合：在小世界里给进程一些“看起来像 root 才能做”的能力，同时把这些能力限制在 namespace 边界内，不让它变成宿主系统的真实 root。
+
+## 8. no_new_privs：防提权保险丝
+
+`no_new_privs` 是一个单向开关。打开后，当前进程和它的子进程不能再通过 `execve` 获得新的权限。它常和 seccomp 一起使用，是沙箱里很重要的防提权保险丝。
+
+先看外层普通 shell：
+
+```bash
+grep -E 'NoNewPrivs|Seccomp|CapEff' /proc/self/status
+```
+
+实际输出：
+
+```text
+CapEff: 0000000000000000
+NoNewPrivs: 0
+Seccomp: 0
+Seccomp_filters: 0
+```
+
+这里 `NoNewPrivs: 0` 表示开关还没打开，`Seccomp: 0` 表示当前也没有 seccomp 过滤器。
+
+用 `setpriv` 打开它，并进入一个新的子 shell：
+
+```bash
+setpriv --no-new-privs sh
+```
+
+在子 shell 里看：
+
+```bash
+grep -E 'NoNewPrivs|Seccomp|CapEff' /proc/self/status
+```
+
+实际输出：
+
+```text
+CapEff: 0000000000000000
+NoNewPrivs: 1
+Seccomp: 0
+Seccomp_filters: 0
+```
+
+再启动一个子进程：
+
+```bash
+sh -c 'echo "child:"; grep -E "NoNewPrivs|Seccomp|CapEff" /proc/self/status'
+```
+
+实际输出：
+
+```text
+child:
+CapEff: 0000000000000000
+NoNewPrivs: 1
+Seccomp: 0
+Seccomp_filters: 0
+```
+
+这说明 `NoNewPrivs` 会继承给子进程。它一旦在某条进程链上打开，就不能被普通程序改回 0。
+
+退出这个子 shell 后再看外层：
+
+```bash
+exit
+grep -E 'NoNewPrivs|Seccomp|CapEff' /proc/self/status
+```
+
+实际输出又回到：
+
+```text
+CapEff: 0000000000000000
+NoNewPrivs: 0
+Seccomp: 0
+Seccomp_filters: 0
+```
+
+这不是因为 `no_new_privs` 被关闭了，而是因为刚才打开它的是子 shell。退出子 shell 后，我们回到了原来的外层 shell；这个外层 shell 从未打开过该开关。
+
+直觉上可以这样理解：
+
+```text
+外层 shell: NoNewPrivs=0
+  └─ setpriv 创建的子 shell: NoNewPrivs=1
+       └─ 子进程: 继续继承 NoNewPrivs=1
+
+退出子 shell 后，回到外层 shell: NoNewPrivs=0
+```
+
+沙箱会在启动不可信命令前打开它。这样即使子进程执行了 setuid 程序或带文件 capability 的程序，也不能借机获得比当前更多的权限。
