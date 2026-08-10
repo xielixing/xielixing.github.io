@@ -877,16 +877,36 @@ spawn("bwrap", [
 ])
 ```
 
-然后 `bwrap` 这个原生程序再去调用 Linux 内核接口。`clone(2)`、`unshare(2)`、`mount(2)`、`execve(2)` 里的 `(2)` 是 man page 的分区编号，意思是“系统调用”，不是函数参数。
+然后 `bwrap` 这个原生程序再去调用 Linux 内核接口。`clone(2)`、`unshare(2)`、`mount(2)`、`execve(2)` 里的 `(2)` 不是函数参数，也不是版本号，而是 Linux man page 的章节编号。常见编号可以这样理解：
 
-`bwrap` 背后大概会落到几类 Linux 接口：
+| 写法 | 含义 |
+| --- | --- |
+| `bash(1)` / `mount(8)` | 用户命令或管理员命令 |
+| `mount(2)` / `execve(2)` | 系统调用，程序直接向内核发请求 |
+| `printf(3)` / `malloc(3)` | C 库函数 |
+| `proc(5)` | 文件格式或伪文件系统说明 |
+| `namespaces(7)` / `capabilities(7)` | Linux 概念或机制说明 |
 
-| 类型 | 典型接口 | 在这里的作用 |
-| --- | --- | --- |
-| namespace | `clone(2)` / `unshare(2)`，配合 `CLONE_NEWNS`、`CLONE_NEWNET`、`CLONE_NEWPID` 等 flag | 创建新的 mount、network、PID 视图，让沙箱进程看到的文件挂载、网络、进程树和宿主不同 |
-| mount | `mount(2)` / bind mount / remount readonly，必要时配合 `pivot_root(2)` 或类似根目录切换手段 | 把宿主路径按规则重新挂进沙箱：有的可写，有的只读，有的用 tmpfs 或 `/dev/null` 替换 |
-| exec | `fork(2)` / `clone(2)` 创建子进程，最后 `execve(2)` 执行 shell 或真实命令 | 沙箱环境准备好之后，把当前进程替换成用户要跑的 Bash 命令 |
-| proc/dev | `mount(2)` 挂载新的 `/proc`，`bwrap --dev /dev` 准备受控设备目录 | 避免沙箱进程直接看到宿主完整 `/proc`，同时提供基本设备文件 |
+所以 `mount(2)` 强调的是“内核系统调用”，不是命令行里的 `mount` 命令；`mount(8)` 才是用户在 shell 里执行的管理命令。
+
+从用户感知到系统接口，可以把 sandbox runtime 的 Linux 路径整理成这样：
+
+| 用户侧能感知到的沙箱特性 | 主要二进制或组件 | 底层接口 / 内核能力 | 这些接口大概提供什么能力 |
+| --- | --- | --- | --- |
+| 只能访问允许的目录，比如 workspace 可写、系统目录只读 | `bwrap` / `bubblewrap` | `mount(2)`、`MS_BIND`、`MS_REC`、`MS_REMOUNT`、`MS_RDONLY` | `mount(2)` 是重布置文件系统视图的核心接口；`MS_BIND` 把宿主目录接进沙箱，`MS_REC` 递归带上子挂载点，`MS_REMOUNT` 重新设置已有挂载，`MS_RDONLY` 把挂载点改成只读 |
+| 看不到或写不了敏感路径，比如 `~/.ssh`、token、配置目录 | `bwrap`，路径扫描可能辅助用 `rg` | mount namespace、bind mount、tmpfs、路径遮蔽 | 不是只靠应用层判断“别访问”，而是让沙箱进程看到一棵被重新布置过的目录树；敏感路径可以不挂入、只读挂入，或用空目录/tmpfs 覆盖 |
+| 沙箱里的 `/tmp` 像一次性草稿纸 | `bwrap` | `mount(2)` + `tmpfs` | 挂载一个内存里的临时文件系统。命令可以写临时文件，但这些内容不污染宿主原来的目录 |
+| 沙箱有独立的文件系统挂载表 | `bwrap` | `clone(2)` / `unshare(2)` + `CLONE_NEWNS` | 创建 mount namespace。可以把它理解成给进程一份自己的“挂载地图”，之后它看到的挂载关系可以和宿主不同 |
+| 里面看起来是 root，但不是宿主机 root | `bwrap` | `clone(2)` / `unshare(2)` + `CLONE_NEWUSER`，以及 `/proc/<pid>/uid_map`、`gid_map`、`setgroups` | 创建 user namespace，并配置内外 uid/gid 映射。进程在沙箱里可以显示为 root，但映射到宿主上仍然是普通用户 |
+| 默认断网，命令找不到外网出口 | `bwrap` | `clone(2)` / `unshare(2)` + `CLONE_NEWNET` | 创建 network namespace。沙箱有自己的网卡、IP、路由表；如果不给它 `eth0` 和 default route，它就没有通向外网的路 |
+| 只能通过受控代理联网 | `socat` | `socket(2)`、`bind(2)`、`listen(2)`、`accept(2)`、`connect(2)`、`read(2)`、`write(2)` | `socat` 在宿主和沙箱之间搭一个 socket 桥。沙箱里的请求先过代理，再由代理按 allow/deny 规则决定是否放行 |
+| 不能通过本地 Unix socket 绕过网络代理 | `apply-seccomp` + `unix-block.bpf` | `prctl(2)`、`PR_SET_NO_NEW_PRIVS`、`PR_SET_SECCOMP`、`seccomp(2)`、classic BPF filter | seccomp 给进程安装系统调用过滤器。这里的过滤规则会让用户命令创建 `AF_UNIX` socket 时被内核拒绝，避免绕过 HTTP/HTTPS 代理去连 Docker socket、SSH agent 等本地服务 |
+| 只能看到沙箱内进程 | `bwrap` | `clone(2)` / `unshare(2)` + `CLONE_NEWPID`，再用 `mount(2)` 挂载匹配的 `procfs` | PID namespace 给进程一棵新的进程树；重新挂 `/proc` 后，`ps` 这类工具看到的就是沙箱里的进程，而不是宿主机全部进程 |
+| 隔离 hostname、IPC、cgroup 视图等其他系统视角 | `bwrap` 或容器运行时 | `CLONE_NEWUTS`、`CLONE_NEWIPC`、`CLONE_NEWCGROUP` | 分别隔离 hostname/domainname、System V IPC / POSIX message queue、进程看到的 cgroup 层级。这些不是每个沙箱配置都必须启用，但属于同一套 namespace 思路 |
+| 限制 CPU、内存、进程数、IO 等资源 | runtime、systemd、容器工具，不一定是单个二进制 | cgroup v2、cgroupfs、systemd slice/scope | cgroup 把进程放进资源控制组，内核按组限制资源。直观说，就是给沙箱一个“最多只能用这么多”的额度 |
+| 更细粒度限制文件读写 | runtime 或 helper，可能直接调用 syscall | Landlock：`landlock_create_ruleset`、`landlock_add_rule`、`landlock_restrict_self` | Landlock 允许普通进程给自己加文件访问规则。规则生效后，即使进程原本有某些文件权限，也会被这层规则再次收窄 |
+| root 权限被拆成小块能力 | `bwrap`、runtime、系统工具 | capabilities、`capget(2)`、`capset(2)`、`prctl(2)` | Linux 把传统 root 权限拆成很多 capability，例如挂载、改网络、调试进程等。沙箱可以丢弃不需要的能力，避免“看起来是 root 就什么都能做” |
+| 沙箱环境搭好后启动用户命令 | `bwrap`、`apply-seccomp` | `fork(2)` / `clone(2)`、`execve(2)` | 前面是在搭舞台：隔离视图、布置目录、装过滤器；`execve(2)` 是最后一步，把进程替换成真正要跑的命令，比如 `bash -c <command>` |
 
 所以从依赖角度看，业务代码依赖的是 `bwrap` 这个用户态程序；`bwrap` 再依赖 Linux 内核支持 namespace、mount、procfs、tmpfs 和进程执行这些能力。如果目标系统没有这些内核接口，就不能直接平移 `bwrap` 这套实现，只能找等价的进程隔离、文件视图隔离和网络隔离能力。
 
