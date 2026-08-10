@@ -13,7 +13,7 @@ Agent 沙箱是什么？简单说，就是给 AI 代理（Agent）跑代码时�
 
 为什么值得关注？因为代理的工作方式和人是两回事。人敲命令之前会先想清楚，代理是"想好了就自己执行"，你拦不住它中途改主意。越是想放手让代理多干活，越得先把边界划清楚，沙箱就是这条边界。
 
-这篇文章要讲的就是 Claude Code 的 Linux 沙箱是怎么实现的，对应的是 anthropic-experimental/sandbox-runtime 这个仓库（npm 包名 `@anthropic-ai/sandbox-runtime`）。前面第 0 到 10 节先把 Linux 自带的机制讲清楚——namespace、mount 隔离、capabilities、seccomp、cgroup、Landlock——第 11 节再拆开看 sandbox-runtime 是怎么把"用户配置的规则"翻译成"内核能理解的系统调用"的。
+这篇文章要讲的就是 Claude Code 的 Linux 沙箱是怎么实现的，对应的是 [anthropic-experimental/sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime) 这个仓库（npm 包名 `@anthropic-ai/sandbox-runtime`）。前面第 0 到 10 节先把 Linux 自带的机制讲清楚——namespace、mount 隔离、capabilities、seccomp、cgroup、Landlock——第 11 节再拆开看 sandbox-runtime 是怎么把"用户配置的规则"翻译成"内核能理解的系统调用"的。
 
 实验环境是 WSL2 里的 Ubuntu 24.04。WSL2 不等同于完整服务器发行版：它适合观察 namespace、user namespace、mount namespace、cgroup v2、Landlock 等基础机制，但 AppArmor/SELinux 这类 LSM 在这里未必启用，网络隔离行为也可能和标准 Linux 虚拟机不同。
 
