@@ -1098,3 +1098,24 @@ seccomp 部分：优先复用 libseccomp，不要手写 BPF。
 ```
 
 前四项都在 `bwrap` 里，第五项是 `apply-seccomp`，第六项是 `socat`。评估另一个系统能不能跑这套沙箱时，逐项确认这些能力是否存在（或有没有等价物），比直接问“能不能装 bwrap”要准确得多；缺了 user namespace 或 syscall 过滤这类关键项，工作量就不是“封装”而是“重新设计”了。
+
+### 11.4 汇总：从用户需求到内核接口
+
+把前几节的内容压成一张表：每一行都是一条"用户感知的需求 → 二进制实现 → 源码 → 封装方式 → 工作量 → 目的 → 内核接口 → 接口通俗解释"的完整链路。
+
+| # | 用户感知的需求 | 调用的二进制 | 开源情况（源码 / 许可证） | 二进制怎么封装 | 工作量 | 达到什么目的 | 底层接口 | 接口功能（通俗版） |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 系统目录只读，只有 workspace 可写 | `bwrap` | ✅ 开源，https://github.com/containers/bubblewrap ，LGPL-2.0-or-later，约 4000 行 C | 拼 `--ro-bind / /`（整棵只读根）+ `--bind <workspace> <workspace>`（单独开放可写） | mount 视图构建约 1200-1500 行 C | 让沙箱进程“看到”一棵重新布置过的目录树，文件根本写不出/读不进它不该碰的地方 | `mount(2)` + `MS_BIND`/`MS_REC`/`MS_REMOUNT`/`MS_RDONLY` | mount=把文件系统“挂”到目录树上；MS_BIND=把宿主目录原样映射到另一个路径（内核级快捷方式）；MS_REC=连子挂载点一起搬；MS_REMOUNT=改已有挂载的属性；MS_RDONLY=改成只读。合起来=整棵复制一套只读系统树，再把工作目录单独开放 |
+| 2 | 敏感路径不可读/写（`~/.ssh`、token） | `bwrap` | ✅ 同 1 | 文件用 `--ro-bind /dev/null <path>` 遮蔽，目录用 `--tmpfs <dir>` 覆盖 | 同 1（mount 模块内）+ 一套“幽灵挂载点”清理逻辑 | deny 优先：让进程在路径层面根本找不到敏感内容，而不是靠程序自觉 | `mount(2)` + `MS_BIND`、`tmpfs` | 把 /dev/null（无底洞）bind 到敏感文件上，读它只得到空；在敏感目录上挂一块“临时黑板”（tmpfs），里面空空如也、写啥都丢 |
+| 3 | 沙箱的 `/tmp` 是一次性草稿纸 | `bwrap` | ✅ 同 1 | 创建受控临时目录 + `--bind`/`--tmpfs` 挂入 | 同 1（mount 模块内） | 临时文件不污染宿主目录 | `mount(2)` + `tmpfs` | tmpfs 是内存里的文件系统，卸载即消失，像一次性便签本 |
+| 4 | 默认断网，命令找不到外网 | `bwrap` | ✅ 同 1 | `--unshare-net` | namespace 编排共 500-800 行 C（userns/mount/PID/网络全部在这里） | 沙箱默认没有外网出口，任何想联网的程序直接无路可走，比“告诉它别联网”硬得多 | `unshare(2)`/`clone(2)` + `CLONE_NEWNET` | 给进程一个全新的“网络世界”，里面没有网卡、没有路由表，像刚装好的路由器还没插网线 |
+| 5 | 只允许访问配置过的域名（网络白名单） | `socat` + JS 代理（HTTP/SOCKS5） | ✅ socat：https://www.dest-unreach.org/socat/ （GitHub 镜像 3hhh/socat），GPL-2.0；JS 代理在 sandbox-runtime 内，Apache-2.0 | 宿主侧 `socat` 监听 Unix socket 转发到代理端口；沙箱内再起一个 `socat` 把 `127.0.0.1:3128/1080` 转回 Unix socket；注入 `HTTP_PROXY` 等环境变量 | 桥接约 200 行配置，代理过滤是 JS 层业务逻辑 | 网络默认断，要联网必须走代理这扇门，代理按 allow/deny 域名规则放行 | `socket(2)`/`bind(2)`/`listen(2)`/`accept(2)`/`connect(2)` | 沙箱里只留一扇“小门”（Unix socket 桥），所有流量必须走这门，门卫（代理）查完域名才放行 |
+| 6 | 不能用本地 Unix socket 绕过网络限制 | `apply-seccomp` + `unix-block.bpf` | ✅ 开源，sandbox-runtime 仓库 `vendor/seccomp-src/`（apply-seccomp.c + seccomp-unix-block.c），Apache-2.0，约 1000 行 C | 创建嵌套 user+PID+mount namespace → 重挂 `/proc` → `PR_SET_NO_NEW_PRIVS` → 装 BPF 过滤器 → `execve` | apply-seccomp 约 1000 行 C（BPF 规则若手写还要更多，建议用 libseccomp） | 堵住 Docker socket、SSH agent 等本地 socket 绕过路径；连 io_uring 也一起挡（防 `IORING_OP_SOCKET` 绕过） | `prctl(2)` + `PR_SET_SECCOMP`、`seccomp(2)` + BPF | 给进程装一道“安检门”：每次调系统调用先过安检，发现要创建 AF_UNIX socket 直接拒绝（返回 EPERM） |
+| 7 | 进程只能看到沙箱内进程 | `bwrap` + `apply-seccomp` | ✅ 同 1 + 同 6 | `--unshare-pid` + `--proc /proc`；apply-seccomp 再套一层嵌套 PID namespace 并重挂私有 `/proc` | 嵌套编排含在 apply-seccomp 的 1000 行里 | 用户命令连 socat、bash 包装、init 都看不到，无法通过 ptrace/`/proc/N/mem` 攻击它们绕过 seccomp | `unshare(2)`/`clone(2)` + `CLONE_NEWPID`、`mount(2)` 挂 procfs | 给进程一个“只有自己家的小区”，外面的人和房子全看不见；/proc 像户口本，重新挂上配套户口本，`ps` 才显示得对 |
+| 8 | 沙箱内无特权，被攻破也难提权 | `bwrap` | ✅ 同 1 | `--unshare-user` + `--cap-drop ALL` | 身份映射逻辑含在 namespace 编排里 | 进程拿不到 CAP_SYS_ADMIN 这类特权钥匙，mount、ptrace、改网络配置全被内核拒绝 | `unshare(2)`/`clone(2)` + `CLONE_NEWUSER`、写 `/proc/<pid>/uid_map`/`gid_map`/`setgroups`、`capset(2)` | 新身份空间里 uid 映射 1:1，但所有“特权钥匙”（capabilities）被收走，进程只能干普通用户能干的事 |
+| 9 | 命令退出后不残留后台进程 | `bwrap` | ✅ 同 1 | `--new-session` + `--die-with-parent` | 进程监督共 300-500 行 C | bwrap 一退出，沙箱整体消失，`&` 拉起的后台进程一起带走 | `setsid(2)`、`prctl(2)` + `PR_SET_PDEATHSIG` | 自成一套会话、和终端脱钩；再签一份“老爸死了我就自杀”的协议（PDEATHSIG），bwrap 退出的瞬间内核发 SIGKILL 全家带走 |
+| 10 | 最后真正跑用户命令 | `bwrap` / `apply-seccomp` | ✅ 同 1 + 同 6 | 布置完环境后 `-- <shell> -c <command>`；apply-seccomp 里用 `execvp` | 进程原语 | 前面全在搭舞台，这一步把舞台交给用户命令 | `fork(2)`/`clone(2)`、`execve(2)` | fork=生一个子进程，execve=把子进程“身体”换成要跑的程序，像换演员上台 |
+| 11 | 危险文件永远禁写（`.bashrc`、`.git/hooks` 等） | `rg`（ripgrep，辅助） | ✅ 开源，https://github.com/BurntSushi/ripgrep ，MIT / Unlicense 双许可 | `rg --files --hidden --max-depth 3` 扫描允许写目录，把命中的危险路径转成 bwrap 的 deny 挂载参数 | 翻译逻辑是 TS 层几千行的一部分（linux-sandbox-utils.ts） | bind 规则只对已存在的文件生效，所以要先把危险文件“找出来”再遮 | `open(2)`/`read(2)`/`stat(2)`/目录遍历 | 翻文件夹找出危险文件，报告给 bwrap 去遮住，本身不是安全边界 |
+| 12 | 限制 CPU/内存/进程数（可选） | 未启用（可选项） | —（需要时选 cgroup v2，Linux 内核能力） | 需要时用 cgroup v2 | 另起一套，不算在 bwrap 路径里 | 给沙箱一个“最多只能用这么多”的额度 | cgroup v2 | 给进程组发“粮票”，超了内核直接限流 |
+
+许可证补充说明：bwrap（LGPL-2.0-or-later）、socat（GPL-2.0）是 copyleft，修改后分发需按对应协议开源；apply-seccomp（Apache-2.0）、ripgrep（MIT/Unlicense）宽松，改完可闭源；sandbox-runtime 本体（TS 层翻译逻辑）也是 Apache-2.0。学习参考不受任何限制。
