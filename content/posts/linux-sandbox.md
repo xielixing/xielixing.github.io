@@ -1,5 +1,5 @@
 +++
-title = 'Agent 沙箱是什么：拆解 Claude Code 的 sandbox-runtime Linux 沙箱机制'
+title = 'Claude Code 的 Linux 沙箱'
 date = 2026-08-10T09:30:00+08:00
 draft = false
 summary = '梳理 Linux 自带沙箱能力的基础机制，包括 namespace、mount 隔离、capabilities、seccomp、cgroup、Landlock 等，以及它们如何组合成一个可用的命令执行沙箱；最后以 sandbox-runtime 为例拆解"用户感知特性 → 二进制 → 内核接口"的依赖链，并评估自研封装这些接口的工作量。'
@@ -7,59 +7,53 @@ tags = ['linux', 'sandbox', 'namespace', 'seccomp', 'landlock']
 categories = ['Engineering']
 +++
 
-Agent 沙箱是什么？简单说，就是给 AI 代理（Agent）跑代码时准备的隔离环境。
+Agent 沙箱是 Agent 跑代码时准备的隔离环境。Claude Code 会自己决定执行什么命令、读写哪些文件、装什么依赖。这些动作是 Agent 自主做的，由于模型是概率输出的，因此有可能会执行 `rm -rf` 这样的把整个系统文件删掉的危险操作。沙箱的作用，就是即使模型真的尝试去执行这样的危险命令，利用沙箱的安全机制，让这个命令不能执行成功。
 
-现在的 AI 编码工具（比如 Claude Code）会自己决定执行什么命令、读写哪些文件、装什么依赖。这些动作是代理自主做的，如果直接跑在你的机器上，一次误触发的 `rm -rf`，或者一条被诱导执行的命令，就可能把整个系统搞坏。沙箱的作用，就是把这类自主行为限制在一个笼子里：文件系统、网络、系统调用都受到约束，出了问题也只坏在笼子内部，不会波及其它。
-
-为什么值得关注？因为代理的工作方式和人是两回事。人敲命令之前会先想清楚，代理是"想好了就自己执行"，你拦不住它中途改主意。越是想放手让代理多干活，越得先把边界划清楚，沙箱就是这条边界。
-
-这篇文章要讲的就是 Claude Code 的 Linux 沙箱是怎么实现的，对应的是 [anthropic-experimental/sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime) 这个仓库（npm 包名 `@anthropic-ai/sandbox-runtime`）。第 1 到 10 节先把 Linux 自带的机制讲清楚——namespace、mount 隔离、capabilities、seccomp、cgroup、Landlock——第 11 节再拆开看 sandbox-runtime 是怎么把"用户配置的规则"翻译成"内核能理解的系统调用"的。
-
-这篇文章不教具体的命令怎么敲、输出长什么样——这些细节在 man 页和官方文档里都能查到。重点是更高一层：每个机制解决什么问题、边界在哪里、直觉怎么建立。所有机制都遵循同一个思路：内核根据进程"处在哪个世界、带什么身份、调用什么入口"来决定放行还是拒绝，沙箱要做的，就是把这三个维度都收窄。
+这篇文章以 Claude Code 的 Linux 沙箱机制 [sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime) 为例子，先讲一下 linux 系统的安全能力有哪些，然后看看如何利用系统的安全能力构建 Claude Code 的沙箱机制。
 
 ## 1. 身份与权限：内核按什么放行
 
-Linux 内核识别的是数字身份，不是用户名：`uid` 是用户 ID（`0` 是 root，普通用户通常从 `1000` 开始分配），`gid` 是主用户组，`groups` 是进程所属的全部组。文件权限的判断，就是拿进程携带的身份去和文件的 owner/group/others 匹配：
+**Q1：uid、gid、groups 各是什么？**
 
-- **owner**：文件主人
-- **group**：文件授权给的团队
-- **others**：其他所有人
+进程的身份由三组数字组成，决定了"这个进程代表谁"——在 shell 里敲一下 `id` 就能看到当前进程的这三组数字：
 
-`owner` 解决"个人所有权"，`group` 解决"团队共享权限"：一个组可以有多个用户，一个用户也可以属于多个组。内核不是先问"你叫什么名字"，而是看"这个进程带着哪些身份标记"。
+- `uid`（user id）：用户 ID，进程以哪个用户身份运行。`uid=0` 是 root，普通用户通常从 `1000` 开始分配。
+- `gid`（group id）：主组 ID，进程默认所属的那个组。
+- `groups`：附加组列表，进程还属于哪些组（一个用户可以同时属于多个组）。
 
-这套判断是沙箱最底层的护栏。比如普通用户读不了 `/root`：它的 owner 是 root，group 和 others 都没有权限，内核直接拒绝，跟程序自觉无关。拒绝发生在内核里，进程绕不过去。
 
-目录上的 `rwx` 和普通文件略有不同：
+**Q2：它们对文件读写起什么作用？**
 
-- `r`：可以列出目录里的文件名
-- `w`：可以在目录里创建、删除、改名文件
-- `x`：可以进入或穿过这个目录，访问里面的路径
+每个文件有三档权限——owner（文件主人）、group（授权给的团队）、others（其他所有人），每档是一组读/写/执行位。进程要读或写一个文件时，内核拿进程的 uid/gid/groups 去匹配这三档：是 owner 就看 owner 那档；不是 owner 但 gid/groups 命中了文件的 group 就看 group 那档；都不是就看 others。命中哪档，就用那档的读写位决定能不能读、能不能写。
+
+举个例子，有个文件 `report.txt`，owner 是 alice（uid 1001），group 是 dev（gid 2000），权限 `rw-r-----`。这 9 个字符分三组、每组 3 个，分别对应 owner / group / others：
+
+- `rw-`：owner（alice）能读、能写
+- `r--`：group（dev）只能读
+- `---`：others 既不能读也不能写
+
+（每个字符位：`r` = 读，`w` = 写，`-` = 没这个权限。）
+
+不同进程去读/写它，结果不一样：
+
+| 进程身份 | 命中哪档 | 读 | 写 |
+| --- | --- | --- | --- |
+| uid=1001(alice)、gid=2000(dev)、groups=[dev] | owner | 可以 | 可以 |
+| uid=1002(bob)、gid=2000(dev)、groups=[dev] | group | 可以 | 不行 |
+| uid=1003(carol)、gid=3000(hr)、groups=[hr] | others | 不行 | 不行 |
+
+**Q3：能给个具体例子吗？**
+
+普通用户读 `/root`：进程 uid 是 1000，不是 `/root` 的 owner（root）；gid/groups 也不在 root 组里；只能落到 others，而 `/root` 的 others 没有读权限，内核直接返回 Permission denied。反过来，如果你对一个文件有 owner 的写权限，内核就放行写操作。整个过程都在内核里完成，程序只能拿到"允许"或"拒绝"的结果，绕不过去。
+
+一句话直觉：**uid/gid/groups 是进程的身份，文件的三档权限是门禁规则，内核拿身份对规则，决定读写是否放行。**
 
 ## 2. User namespace：小世界里的 root
 
-user namespace 创建的是一个"身份空间"：在这个小世界里，进程看起来是 root（`id` 显示 `uid=0`）；但在外面的宿主系统里，它仍然是那个普通用户。namespace 里维护一张 uid/gid 映射表，把"namespace 里的 0"映射到"宿主里的普通用户 1000"。
-
-一个有意思的连带现象：外面宿主的 `/root` 在这个 namespace 里会显示成 `nobody/nogroup`，访问依旧被拒。这不是 `/root` 被改了归属，而是 namespace 里根本没有外部 `root` 的映射，无法表示，只能显示成一个"没有名字"的身份。
-
-所以这三件事并不矛盾：
-
-- `id` 显示 `uid=0(root)` → 在这个小世界里你是 root
-- `/root` 显示 `nobody/nogroup` → 外面真正的 root 在这个世界里无法表示
-- 访问 `/root` 仍然被拒 → 你的 root 权限不覆盖外面的资源
-
-一句话直觉：你是"这个小世界里的 root"，不是"外面真实系统的 root"。user namespace 不是让普通用户攻破系统，而是创建了一个新的身份空间，把普通用户映射成里面的 root，同时不授予外部 root 的权力。这是整个沙箱体系的起点：一个非特权用户，先拥有一个"自己的小世界"，后面的隔离都在这个世界里搭建。
+// User namespace建立直觉
 
 ## 3. Mount namespace：每个进程一份挂载视图
 
-如果 user namespace 改变的是"进程怎么看用户身份"，mount namespace 改变的就是"进程怎么看文件系统挂载表"。
-
-Linux 的目录树不是单一硬盘目录。很多不同来源的文件系统会被挂到同一棵目录树上：`/proc` 是 procfs（内容读的那一刻由内核现编），`/tmp` 下面可以挂一个临时的 tmpfs（只存在内存里），还可以有网络共享盘。`mount` 就是"把一个文件系统的根接到目录树的一个目录点上"，挂上之后，从这个点往下走的路径就进入该数据源的内容；`umount` 就是拔掉。每个数据源都是这样接进 `/` 树的。
-
-一个直观的结论可以直接讲：在 mount namespace 里挂上的 tmpfs，写进去的内容只存在于这个 namespace 里；退出之后，外面看不到这些内容（连挂载点都不存在了）。挂载视图是跟着 namespace 走的。
-
-所以 mount namespace 的直觉是：**不同进程可以拥有不同的文件系统挂载视图。**
-
-沙箱会大量利用这一点：给进程一个假的 `/tmp`，把系统目录挂成只读，只挂入允许访问的 workspace，不把真实的 `~/.ssh`、token、配置目录暴露进去。它不只是"改权限"，而是先改变进程能看见哪一棵文件系统树。
 
 ### 3.1 挂载问答：从"路径"到 mount
 
