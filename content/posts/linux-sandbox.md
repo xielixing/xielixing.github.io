@@ -13,35 +13,13 @@ Agent 沙箱是什么？简单说，就是给 AI 代理（Agent）跑代码时�
 
 为什么值得关注？因为代理的工作方式和人是两回事。人敲命令之前会先想清楚，代理是"想好了就自己执行"，你拦不住它中途改主意。越是想放手让代理多干活，越得先把边界划清楚，沙箱就是这条边界。
 
-这篇文章要讲的就是 Claude Code 的 Linux 沙箱是怎么实现的，对应的是 [anthropic-experimental/sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime) 这个仓库（npm 包名 `@anthropic-ai/sandbox-runtime`）。前面第 0 到 10 节先把 Linux 自带的机制讲清楚——namespace、mount 隔离、capabilities、seccomp、cgroup、Landlock——第 11 节再拆开看 sandbox-runtime 是怎么把"用户配置的规则"翻译成"内核能理解的系统调用"的。
+这篇文章要讲的就是 Claude Code 的 Linux 沙箱是怎么实现的，对应的是 [anthropic-experimental/sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime) 这个仓库（npm 包名 `@anthropic-ai/sandbox-runtime`）。第 1 到 10 节先把 Linux 自带的机制讲清楚——namespace、mount 隔离、capabilities、seccomp、cgroup、Landlock——第 11 节再拆开看 sandbox-runtime 是怎么把"用户配置的规则"翻译成"内核能理解的系统调用"的。
 
-实验环境是 WSL2 里的 Ubuntu 24.04。WSL2 不等同于完整服务器发行版：它适合观察 namespace、user namespace、mount namespace、cgroup v2、Landlock 等基础机制，但 AppArmor/SELinux 这类 LSM 在这里未必启用，网络隔离行为也可能和标准 Linux 虚拟机不同。
+这篇文章不教具体的命令怎么敲、输出长什么样——这些细节在 man 页和官方文档里都能查到。重点是更高一层：每个机制解决什么问题、边界在哪里、直觉怎么建立。所有机制都遵循同一个思路：内核根据进程"处在哪个世界、带什么身份、调用什么入口"来决定放行还是拒绝，沙箱要做的，就是把这三个维度都收窄。
 
-## 0. 普通用户的身份基线
+## 1. 身份与权限：内核按什么放行
 
-后面的实验默认在 WSL2 Ubuntu 里的普通用户下执行：
-
-```bash
-mkdir -p ~/sandbox-lab
-cd ~/sandbox-lab
-id
-pwd
-```
-
-实际输出：
-
-```text
-uid=1000(sandboxer) gid=1000(sandboxer) groups=1000(sandboxer)
-/home/sandboxer/sandbox-lab
-```
-
-这里有几个基础事实：
-
-- `uid` 是 user id。Linux 内核真正识别的是数字 ID，不是用户名字符串。`uid=0` 是 root；`uid=1000` 是普通用户。
-- `gid` 是当前进程的主用户组 ID。
-- `groups` 是当前进程所属的所有用户组列表，通常包含主组，也可能包含附加组。
-
-Linux 最基础的文件权限判断，就是拿当前进程携带的 `uid/gid/groups` 去和文件的 owner/group/others 权限匹配。可以把它想成文件门禁：
+Linux 内核识别的是数字身份，不是用户名：`uid` 是用户 ID（`0` 是 root，普通用户通常从 `1000` 开始分配），`gid` 是主用户组，`groups` 是进程所属的全部组。文件权限的判断，就是拿进程携带的身份去和文件的 owner/group/others 匹配：
 
 ```text
 owner   文件主人
@@ -49,58 +27,9 @@ group   文件授权给的团队
 others  其他所有人
 ```
 
-`owner` 解决“个人所有权”，`group` 解决“团队共享权限”。一个 group 里可以有多个用户；用户也可以属于多个 group。`id` 输出里的 `gid=...` 是主组，`groups=...` 是当前进程所属的完整组列表。内核不是先问“你叫什么名字”，而是看“这个进程带着哪些身份标记”。
+`owner` 解决"个人所有权"，`group` 解决"团队共享权限"：一个组可以有多个用户，一个用户也可以属于多个组。内核不是先问"你叫什么名字"，而是看"这个进程带着哪些身份标记"。
 
-至于为什么这里是 `1000`，不是 `1001`：在 Ubuntu/Debian 这类系统里，普通用户 UID 通常从 `1000` 开始分配。这个 WSL 发行版之前没有普通用户，所以我们创建的 `sandboxer` 成了第一个普通用户，自然拿到了 `1000`。如果系统里已经有一个普通用户占用了 `1000`，下一个用户通常才会拿到 `1001`。
-
-后面的命令默认都在这个身份和目录下执行：
-
-```text
-用户：sandboxer
-目录：/home/sandboxer/sandbox-lab
-提示符：sandboxer@DESKTOP-ABLKNN8C:~/sandbox-lab$
-```
-
-下一步要观察的第一件事，是普通用户为什么不能读取 root 的私有目录。这会把“uid/gid 决定基础权限”的直觉先钉住，然后再进入 user namespace。
-
-## 1. 普通用户访问 root 私有目录
-
-先看 `/root` 目录本身：
-
-```bash
-ls -ld /root
-```
-
-输出类似：
-
-```text
-drwx------ 10 root root 4096 Aug 9 11:11 /root
-```
-
-这里 `ls -ld /root` 的含义是：用详细格式查看 `/root` 这个目录本身，而不是展开它里面的内容。`-l` 是 long format，显示权限、owner、group、大小、时间等信息；`-d` 是 directory itself，只看目录本身。
-
-权限字段可以拆成：
-
-```text
-d   rwx   ---   ---
-    owner group others
-```
-
-后面的 `root root` 分别表示 owner 是 `root` 用户，group 是 `root` 用户组。所以这行的意思是：`/root` 是一个目录，只有 owner `root` 有读、写、进入权限；group 和 others 都没有权限。
-
-再尝试展开目录内容：
-
-```bash
-ls /root
-```
-
-实际结果：
-
-```text
-ls: cannot open directory '/root': Permission denied
-```
-
-这一步失败不是 `ls` 程序自己决定的，而是内核根据当前进程的身份和 `/root` 的权限拒绝了它。当前进程是 `uid=1000(sandboxer)`，不是 owner `root`，也没有命中可用的 group 权限，最后只能落到 others；但 `/root` 的 others 权限是 `---`。
+这套判断是沙箱最底层的护栏。比如普通用户读不了 `/root`：它的 owner 是 root，group 和 others 都没有权限，内核直接拒绝，跟程序自觉无关。拒绝发生在内核里，进程绕不过去。
 
 目录上的 `rwx` 和普通文件略有不同：
 
@@ -110,153 +39,29 @@ w  可以在目录里创建、删除、改名文件
 x  可以进入或穿过这个目录，访问里面的路径
 ```
 
-所以可以把这一步理解成：
+## 2. User namespace：小世界里的 root
 
-```text
-ls -ld /root   看门牌，可以
-ls /root       进门看房间，不行
-```
+user namespace 创建的是一个"身份空间"：在这个小世界里，进程看起来是 root（`id` 显示 `uid=0`）；但在外面的宿主系统里，它仍然是那个普通用户。namespace 里维护一张 uid/gid 映射表，把"namespace 里的 0"映射到"宿主里的普通用户 1000"。
 
-## 2. User namespace 里的 root
-
-接下来创建一个新的 user namespace：
-
-```bash
-unshare -Ur sh
-```
-
-`-U` 表示创建 user namespace，`-r` 表示把当前用户映射成 namespace 里的 root。进入新 shell 后执行：
-
-```bash
-echo "== inside user namespace =="
-id
-cat /proc/self/uid_map
-cat /proc/self/gid_map
-```
-
-实际输出：
-
-```text
-== inside user namespace ==
-uid=0(root) gid=0(root) groups=0(root)
-         0       1000          1
-         0       1000          1
-```
-
-这两张映射表的意思是：
-
-```text
-namespace 里的 uid 0  <->  外面宿主的 uid 1000
-namespace 里的 gid 0  <->  外面宿主的 gid 1000
-只映射 1 个 ID
-```
-
-也就是说，在这个小世界里，当前进程看起来是 root；但在外面的宿主系统里，它仍然只是 `sandboxer`。
-
-再看 `/root`：
-
-```bash
-ls -ld /root
-ls /root
-```
-
-实际输出：
-
-```text
-drwx------ 10 nobody nogroup 4096 Aug 9 11:11 /root
-ls: cannot open directory '/root': Permission denied
-```
-
-这里最有意思的是 owner/group 从外面的 `root root` 变成了里面的 `nobody nogroup`。这不是 `/root` 真的被改了归属，而是当前 user namespace 里没有外部 `uid=0/gid=0` 的映射。namespace 只认识外部 `1000`，并把它显示成内部 `0(root)`；外部真正的 root 无法在这个 namespace 里表示，于是显示成 `nobody/nogroup`。
+一个有意思的连带现象：外面宿主的 `/root` 在这个 namespace 里会显示成 `nobody/nogroup`，访问依旧被拒。这不是 `/root` 被改了归属，而是 namespace 里根本没有外部 `root` 的映射，无法表示，只能显示成一个"没有名字"的身份。
 
 所以这三件事并不矛盾：
 
 ```text
-id 显示 uid=0(root)
-/root 显示 nobody nogroup
-ls /root 仍然 Permission denied
+id 显示 uid=0(root)           → 在这个小世界里你是 root
+/root 显示 nobody/nogroup     → 外面真正的 root 在这个世界里无法表示
+访问 /root 仍然被拒           → 你的 root 权限不覆盖外面的资源
 ```
 
-一句话直觉：你是“这个小世界里的 root”，不是“外面真实系统的 root”。`unshare -Ur` 不是让普通用户攻破系统，而是创建了一个新的身份空间，把普通用户映射成里面的 root，同时不授予外部 root 的权力。
+一句话直觉：你是"这个小世界里的 root"，不是"外面真实系统的 root"。user namespace 不是让普通用户攻破系统，而是创建了一个新的身份空间，把普通用户映射成里面的 root，同时不授予外部 root 的权力。这是整个沙箱体系的起点：一个非特权用户，先拥有一个"自己的小世界"，后面的隔离都在这个世界里搭建。
 
-顺便拆一下 `ls -ld /root` 的完整输出：
+## 3. Mount namespace：每个进程一份挂载视图
 
-```text
-drwx------  10  nobody  nogroup  4096  Aug 9 11:11  /root
-权限        链接数 owner   group    大小   修改时间       路径
-```
+如果 user namespace 改变的是"进程怎么看用户身份"，mount namespace 改变的就是"进程怎么看文件系统挂载表"。
 
-其中 `10` 是 link count。对目录来说，可以粗略理解为 `2 + 直接子目录数量`，不是权限。`4096` 是目录本身占用的字节数；目录也是一种特殊文件，里面保存“文件名到 inode”的映射，4096 通常是一个文件系统块大小。当前实验里，真正影响访问判断的是权限和 owner/group。
+Linux 的目录树不是单一硬盘目录。很多不同来源的文件系统会被挂到同一棵目录树上：`/proc` 是 procfs（内容读的那一刻由内核现编），`/tmp` 下面可以挂一个临时的 tmpfs（只存在内存里），还可以有网络共享盘。`mount` 就是"把一个文件系统的根接到目录树的一个目录点上"，挂上之后，从这个点往下走的路径就进入该数据源的内容；`umount` 就是拔掉。每个数据源都是这样接进 `/` 树的。
 
-## 3. Mount namespace 和临时挂载
-
-如果 user namespace 改变的是“进程怎么看用户身份”，mount namespace 改变的就是“进程怎么看文件系统挂载表”。
-
-Linux 的目录树不是单一硬盘目录。很多不同来源的文件系统可以被挂到同一棵目录树上，比如 `/proc` 通常是 procfs，`/tmp` 下面也可以挂一个临时的 tmpfs。`mount` 可以理解成把一个文件系统接到某个目录点上；`findmnt` 用来查看当前进程能看到的挂载关系。
-
-先在外面确认没有挂载：
-
-```bash
-findmnt /tmp/sbox-demo || echo "outside: no mount yet"
-ls -ld /tmp/sbox-demo 2>/dev/null || echo "outside: no directory yet"
-```
-
-实际输出：
-
-```text
-outside: no mount yet
-outside: no directory yet
-```
-
-然后创建新的 user namespace 和 mount namespace：
-
-```bash
-unshare -Ur -m sh
-```
-
-这里 `-m` 表示创建 mount namespace。进入里面后执行：
-
-```bash
-mkdir -p /tmp/sbox-demo
-mount -t tmpfs tmpfs /tmp/sbox-demo
-touch /tmp/sbox-demo/inside.txt
-findmnt /tmp/sbox-demo
-ls -la /tmp/sbox-demo
-```
-
-实际输出：
-
-```text
-TARGET          SOURCE FSTYPE OPTIONS
-/tmp/sbox-demo tmpfs  tmpfs  rw,relatime,uid=1000,gid=1000
-
-total 4
-drwxrwxrwt 2 root   root      60 Aug 9 13:18 .
-drwxrwxrwt 9 nobody nogroup 4096 Aug 9 13:18 ..
--rw-rw-r-- 1 root   root       0 Aug 9 13:18 inside.txt
-```
-
-这说明在当前 namespace 的挂载表里，`/tmp/sbox-demo` 已经变成一个 tmpfs 挂载点。`inside.txt` 写进的是这个临时文件系统，而不是外面原来的 `/tmp` 目录。
-
-退出 namespace 后再看：
-
-```bash
-exit
-findmnt /tmp/sbox-demo || echo "outside: no mount"
-ls -la /tmp/sbox-demo 2>/dev/null || echo "outside: no directory"
-```
-
-实际输出：
-
-```text
-outside: no mount
-
-total 8
-drwxr-xr-x 2 sandboxer sandboxer 4096 Aug 9 13:18 .
-drwxrwxrwt 9 root      root      4096 Aug 9 13:33 ..
-```
-
-这里有一个很好的细节：`/tmp/sbox-demo` 这个目录壳还在，因为 `mkdir -p /tmp/sbox-demo` 创建的是底层 `/tmp` 里的普通目录；但 `inside.txt` 不见了，因为它是在 namespace 里面挂上的 tmpfs 里创建的。退出后，外面的挂载表里没有这个 tmpfs，自然也看不到 tmpfs 里的文件。
+一个直观的结论可以直接讲：在 mount namespace 里挂上的 tmpfs，写进去的内容只存在于这个 namespace 里；退出之后，外面看不到这些内容（连挂载点都不存在了）。挂载视图是跟着 namespace 走的。
 
 所以 mount namespace 的直觉是：
 
@@ -264,7 +69,7 @@ drwxrwxrwt 9 root      root      4096 Aug 9 13:33 ..
 不同进程可以拥有不同的文件系统挂载视图。
 ```
 
-沙箱会大量利用这一点：给进程一个假的 `/tmp`，把系统目录挂成只读，只挂入允许访问的 workspace，不把真实的 `~/.ssh`、token、配置目录暴露进去。它不只是“改权限”，而是先改变进程能看见哪一棵文件系统树。
+沙箱会大量利用这一点：给进程一个假的 `/tmp`，把系统目录挂成只读，只挂入允许访问的 workspace，不把真实的 `~/.ssh`、token、配置目录暴露进去。它不只是"改权限"，而是先改变进程能看见哪一棵文件系统树。
 
 ### 3.1 挂载问答：从“路径”到 mount
 
@@ -300,24 +105,9 @@ drwxrwxrwt 9 root      root      4096 Aug 9 13:33 ..
 
 一句话收尾：mount 只负责“哪个数据源接在哪个路标上”，不负责挑内容；内容由数据源按进程身份实时决定，沙箱再用 bind mount 逐点遮盖来微调。
 
-## 4. 外层网络视图：网卡、网段、网关和路由
+## 4. 网络视图：网卡、网段、网关和路由
 
-进入 network namespace 之前，先看外层正常 WSL 环境怎么访问网络：
-
-```bash
-echo "== outside network =="
-ip addr
-ip route
-```
-
-输出里有两个主要网络接口：
-
-```text
-1: lo
-2: eth0
-```
-
-可以把网络理解成寄快递：
+在讲 network namespace 之前，先建立一套网络概念。可以把网络理解成寄快递：
 
 ```text
 网卡     = 出入口
@@ -327,107 +117,24 @@ IP 地址  = 这个出入口的地址
 路由表   = 遇到不同目的地时该从哪条路走
 ```
 
-`lo` 是 loopback，本机回环接口：
+`lo`（loopback）是本机回环接口，地址是 `127.0.0.1`，专门用来"自己和自己说话"：本机进程访问本机服务走的就是它，不需要出外网。真正上网走的是 `eth0` 这类网卡，上面有一个 IP（比如 `172.22.181.127/20`），`/20` 表示本地网段范围——同一个网段是邻居，直接送；不在这个范围里的目标，交给网关转发。
+
+路由表里最关键的是那行兜底规则：`default via <网关IP> dev <网卡>`——不知道怎么走的目标，都交给默认网关。
 
 ```text
-inet 127.0.0.1/8
-inet6 ::1/128
+访问 127.0.0.1   → 走 lo，本机内部
+访问外部地址     → 走 eth0 → 网关 → 外部网络
 ```
 
-它用于本机访问自己。比如一个服务监听 `127.0.0.1:8000`，本机进程访问它时走的就是 `lo`，不需要出外网。
+名字和拓扑会变（Wi-Fi 叫 `wlan0`，服务器上可能有 bond、bridge、Docker 网桥，容器里常见虚拟网卡），但基本概念不变：进程通过网络接口、IP、路由表和网关访问网络。
 
-`eth0` 是 WSL 的主要网络接口：
+network namespace 要隔离的，正是这一整套视图：进程能看到哪些网卡、哪些 IP、哪些路由、有没有默认网关。一个沙箱如果不给进程 `eth0` 和 default route，它就算调用网络程序，也没有外网出口。
 
-```text
-inet 172.22.181.127/20 brd 172.22.191.255 scope global eth0
-```
+## 5. Network namespace：一个只有 lo 的空网络世界
 
-这里 `172.22.181.127` 是 WSL 这张虚拟网卡的 IPv4 地址。`/20` 表示它所在的本地网段，大致是 `172.22.176.0` 到 `172.22.191.255`。同一个网段可以理解成同一个小区里的地址；不在这个范围里的目标，就要交给网关转发。
+新建的 network namespace 里，网卡列表只剩下一个默认关闭的 `lo`：没有 `eth0`，没有外部 IP，没有 default route。把 `lo` 启起来之后，"自己访问自己"可用（`ping 127.0.0.1` 能通），但外网仍然不可达。
 
-路由表里最关键的是：
-
-```text
-default via 172.22.176.1 dev eth0
-172.22.176.0/20 dev eth0 proto kernel scope link src 172.22.181.127
-```
-
-第一行表示：不知道怎么走的目标，都交给默认网关 `172.22.176.1`，从 `eth0` 发出去。第二行表示：访问 `172.22.176.0/20` 这个本地网段时，直接从 `eth0` 走，源地址用 `172.22.181.127`。
-
-所以外层 WSL 的网络路径大概是：
-
-```text
-访问 127.0.0.1
-WSL 进程 -> lo -> 本机服务
-
-访问外部地址
-WSL 进程 -> eth0(172.22.181.127) -> gateway(172.22.176.1) -> 外部网络
-```
-
-这里的 `eth0` 是虚拟网卡，不是物理网卡。Windows 是宿主系统，WSL2 像一台轻量虚拟机，Windows/WSL 网络层给它提供了一个虚拟网络出口。
-
-如果是在一台真正的 Linux 机器上，拓扑可能不一样：`eth0` 可能对应真实有线网卡，Wi-Fi 可能叫 `wlan0`，服务器上可能有多张物理网卡、bond、bridge、veth、Docker 网桥等。容器里也经常看到虚拟网卡。名字和拓扑会变，但基本概念不变：进程通过网络接口、IP、路由表和网关访问网络。
-
-network namespace 要隔离的，正是这一整套网络视图：进程能看到哪些网卡、哪些 IP、哪些路由、有没有默认网关。一个沙箱如果不给进程 `eth0` 和 default route，它就算调用网络程序，也没有外网出口。
-
-## 5. Network namespace 里的空网络世界
-
-创建新的 network namespace：
-
-```bash
-unshare -Urn sh
-```
-
-这里 `-n` 表示创建 network namespace。进入里面后执行：
-
-```bash
-id
-ip -br addr
-ip route
-```
-
-实际输出：
-
-```text
-uid=0(root) gid=0(root) groups=0(root)
-lo               DOWN
-```
-
-`ip route` 没有任何输出。和外层网络相比，这个 namespace 里没有 `eth0`，没有外部 IP，也没有 default route；只有一个默认关闭的 `lo`。这说明 network namespace 隔离的是整套网络视图：网卡列表、IP 地址、路由表、默认网关。
-
-先把 loopback 启起来：
-
-```bash
-ip link set lo up
-ip -br addr
-ip route
-```
-
-实际输出：
-
-```text
-lo               UNKNOWN        127.0.0.1/8 ::1/128
-```
-
-`ip route` 仍然没有输出。此时再测试：
-
-```bash
-ping -c 1 127.0.0.1
-ping -c 1 8.8.8.8
-```
-
-实际结果：
-
-```text
-PING 127.0.0.1 (127.0.0.1) 56(84) bytes of data.
-64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time=1.46 ms
-
---- 127.0.0.1 ping statistics ---
-1 packets transmitted, 1 received, 0% packet loss, time 0ms
-
-ping: connect: Network is unreachable
-```
-
-这说明里面的“自己访问自己”已经可用，但外网仍然不可达。原因不是 DNS、代理或 ping 程序的问题，而是当前 network namespace 里根本没有外网出口：没有 `eth0`，也没有默认网关。
+原因不是 DNS、代理或程序问题，而是这个世界里根本没有外网出口：没有网卡，数据出不了门；没有路由表，不知道往哪送；没有默认网关，没有人接手。断网是结构性的——不是程序被禁止联网，而是这个世界里根本没有路，程序再多花招也没用。
 
 所以 network namespace 的直觉是：
 
@@ -436,7 +143,7 @@ ping: connect: Network is unreachable
 这个世界里可以只有 lo，没有 eth0，没有 default route。
 ```
 
-这就是沙箱断网的基础方式之一。它比“告诉程序不要联网”更硬，因为内核给这个进程的网络视图里压根没有通向外网的路。
+这就是沙箱断网的基础方式之一。它比"告诉程序不要联网"更硬，因为内核给这个进程的网络视图里压根没有通向外网的路。
 
 ### 5.1 网络问答：从“出门”到“断网”
 
@@ -540,90 +247,11 @@ IP 是地址系统，代理是角色。代理也是一种网络服务，所以�
 
 程序甚至不需要知道目标 IP——它只告诉代理“我要去 example.com”，解析和连接都由代理代办（所以叫“代”理）。沙箱里这层意义重大：目标地址的解析和连接全握在代理手里，程序至始至终接触不到目标的真实 IP，这就是代理能“把关”的原因。
 
-## 6. PID namespace 和新的进程树
+## 6. PID namespace：新的进程树
 
-PID namespace 隔离的是进程编号和进程树。先在外层看当前 shell：
+PID namespace 隔离的是进程编号和进程树。进入新的 PID namespace 后，当前进程会变成这个世界的 1 号进程，子进程从这里开始编号；但同一个进程在外面依然保留它原来的 PID。
 
-```bash
-echo "== outside pid baseline =="
-echo "shell pid: $$"
-ps -o pid,ppid,comm | head
-```
-
-实际输出：
-
-```text
-shell pid: 1786
-
-  PID  PPID COMMAND
- 1786  1760 bash
-27314  1786 ps
-27315  1786 head
-```
-
-这里当前 shell 的 PID 是 `1786`，它的父进程是 `1760`。`ps` 和 `head` 是刚刚为了显示进程列表临时启动的子进程。
-
-创建新的 PID namespace：
-
-```bash
-unshare -Urpf sh
-```
-
-参数含义：
-
-```text
--U  新 user namespace
--r  当前用户映射成里面的 root
--p  新 PID namespace
--f  fork 一个子进程进入新 PID namespace
-```
-
-进入后执行：
-
-```bash
-echo "shell pid: $$"
-ps -o pid,ppid,comm
-```
-
-实际看到：
-
-```text
-shell pid: 1
-
-  PID  PPID COMMAND
-```
-
-`shell pid: 1` 说明当前 `sh` 在这个 PID namespace 里是 1 号进程，也就是这个小世界里的第一个进程。`ps` 只有表头，是因为 PID namespace 已经换了，但 `/proc` 还没有换成匹配这个 PID namespace 的 procfs。`ps` 主要靠读取 `/proc` 来列进程；如果 `/proc` 视图不配套，看到的结果就会不完整。
-
-退出后再用 `--mount-proc`：
-
-```bash
-unshare -Urpf --mount-proc sh
-```
-
-进入后执行：
-
-```bash
-echo "shell pid: $$"
-ps -o pid,ppid,comm
-ls -ld /proc/1
-readlink /proc/1/exe
-```
-
-实际输出：
-
-```text
-shell pid: 1
-
-  PID  PPID COMMAND
-    1     0 sh
-    2     1 ps
-
-dr-xr-xr-x 9 root root 0 Aug 9 14:57 /proc/1
-/usr/bin/dash
-```
-
-这次 `ps` 可以正确看到 namespace 里的进程树：`sh` 是 PID 1，`ps` 是它启动的子进程。`/proc/1/exe` 指向 `/usr/bin/dash`，说明这里的 `sh` 实际由 dash 提供。
+配套要做的是重新挂载 `/proc`。`ps`、`top` 这类工具看到的世界来自 `/proc`；PID namespace 换掉之后，如果 `/proc` 还连着宿主，进程列表就会穿帮——这正是沙箱要防止的。
 
 PID namespace 的直觉是：
 
@@ -632,203 +260,40 @@ PID namespace 的直觉是：
 在新的 PID namespace 里，又有里面的 PID。
 ```
 
-沙箱和容器会用它让进程只能看到自己这棵小进程树，而不是宿主机上的所有进程。配套挂载 `/proc` 很重要，因为很多进程工具看到的世界来自 `/proc`。
+沙箱和容器会用它让进程只能看到自己这棵小进程树，而不是宿主机上的所有进程。
 
 ## 7. Capabilities：root 权限被拆开了
 
-Linux 里的 root 权限不是一个不可分割的整体，而是拆成了一组 capabilities。比如挂载文件系统通常需要 `CAP_SYS_ADMIN`，修改网络配置通常需要 `CAP_NET_ADMIN`，调试别的进程可能需要 `CAP_SYS_PTRACE`。
+Linux 里的 root 权限不是一个不可分割的整体，而是拆成了一组 capabilities：挂载文件系统需要 `CAP_SYS_ADMIN`，修改网络配置需要 `CAP_NET_ADMIN`，调试别的进程需要 `CAP_SYS_PTRACE`。普通用户真正生效的能力集（`CapEff`）是空的，所以直接挂载 tmpfs 会失败。
 
-先看普通用户当前进程的 capability：
+进入 user namespace 之后，进程看起来就拥有了完整的能力集。但 capability 不是"无限 root 权力"，它有 namespace 边界：里面的 `CAP_SYS_ADMIN` 只能修改自己 namespace 内的资源，不能直接改外层真实系统。
 
-```bash
-grep -E 'CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs' /proc/self/status
-```
-
-实际输出：
+一个关键的组合：只有 user namespace 时，想挂载仍然会被拒（没有属于自己的挂载视图可以改）；配上 mount namespace 之后，挂载就成功了——进程既拥有"这个 namespace 里的 capability"，又拥有"属于自己的挂载视图"。
 
 ```text
-CapInh: 0000000000000000
-CapPrm: 0000000000000000
-CapEff: 0000000000000000
-CapBnd: 000001ffffffffff
-CapAmb: 0000000000000000
-NoNewPrivs: 0
-```
-
-这里先看 `CapEff`，它表示当前真正生效的 capabilities。普通用户的 `CapEff` 是 0，所以直接挂载 tmpfs 会失败：
-
-```bash
-mkdir -p /tmp/cap-demo
-mount -t tmpfs tmpfs /tmp/cap-demo
-```
-
-实际输出：
-
-```text
-mount: /tmp/cap-demo: must be superuser to use mount.
-```
-
-进入 user namespace 后再看：
-
-```bash
-unshare -Ur sh
-id
-grep -E 'CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs' /proc/self/status
-```
-
-实际输出：
-
-```text
-uid=0(root) gid=0(root) groups=0(root)
-CapInh: 0000000000000000
-CapPrm: 000001ffffffffff
-CapEff: 000001ffffffffff
-CapBnd: 000001ffffffffff
-CapAmb: 0000000000000000
-NoNewPrivs: 0
-```
-
-这里 `CapEff` 变成了非 0，说明在这个 user namespace 里确实拥有很多 capability。但如果只创建 user namespace，不创建新的 mount namespace，再执行：
-
-```bash
-mount -t tmpfs tmpfs /tmp/cap-demo
-```
-
-实际仍然失败：
-
-```text
-mount: /tmp/cap-demo: permission denied.
-```
-
-这说明 capability 不是“无限 root 权力”。它有 namespace 边界：里面的 `CAP_SYS_ADMIN` 不能直接拿去修改外层真实系统的挂载视图。
-
-把 user namespace 和 mount namespace 配起来：
-
-```bash
-unshare -Ur -m sh
-id
-grep -E 'CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs' /proc/self/status
-mkdir -p /tmp/cap-demo
-mount -t tmpfs tmpfs /tmp/cap-demo
-findmnt /tmp/cap-demo
-umount /tmp/cap-demo
-```
-
-实际输出：
-
-```text
-uid=0(root) gid=0(root) groups=0(root)
-CapEff: 000001ffffffffff
-
-TARGET        SOURCE FSTYPE OPTIONS
-/tmp/cap-demo tmpfs  tmpfs  rw,relatime,uid=1000,gid=1000
-```
-
-这次挂载成功了，因为进程既拥有当前 user namespace 里的 capability，也拥有一个新的 mount namespace 可以被它修改。
-
-所以这一步的直觉是：
-
-```text
-普通用户：没有有效 capability，mount 失败。
+普通用户：没有有效 capability，挂载失败。
 user namespace root：有里面的 capability，但不能随便改外层资源。
-user + mount namespace：有里面的 CAP_SYS_ADMIN，也有自己的挂载视图，mount 成功。
+user + mount namespace：有里面的 CAP_SYS_ADMIN，也有自己的挂载视图，挂载成功。
 ```
 
-沙箱会利用这个组合：在小世界里给进程一些“看起来像 root 才能做”的能力，同时把这些能力限制在 namespace 边界内，不让它变成宿主系统的真实 root。
+沙箱会利用这个组合：在小世界里给进程一些"看起来像 root 才能做"的能力，同时把这些能力限制在 namespace 边界内，不让它变成宿主系统的真实 root。
 
 ## 8. no_new_privs：防提权保险丝
 
-`no_new_privs` 是一个单向开关。打开后，当前进程和它的子进程不能再通过 `execve` 获得新的权限。它常和 seccomp 一起使用，是沙箱里很重要的防提权保险丝。
+`no_new_privs` 是一个单向开关。打开后，当前进程和它的子进程不能再通过 `execve` 获得新的权限——也就是说，即使去执行 setuid 程序或带文件 capability 的程序，也不能借机提权。
 
-先看外层普通 shell：
-
-```bash
-grep -E 'NoNewPrivs|Seccomp|CapEff' /proc/self/status
-```
-
-实际输出：
+它有两个关键性质：
 
 ```text
-CapEff: 0000000000000000
-NoNewPrivs: 0
-Seccomp: 0
-Seccomp_filters: 0
+一旦打开，就无法由普通程序关回。
+会沿进程链继承给所有子进程。
 ```
 
-这里 `NoNewPrivs: 0` 表示开关还没打开，`Seccomp: 0` 表示当前也没有 seccomp 过滤器。
-
-用 `setpriv` 打开它，并进入一个新的子 shell：
-
-```bash
-setpriv --no-new-privs sh
-```
-
-在子 shell 里看：
-
-```bash
-grep -E 'NoNewPrivs|Seccomp|CapEff' /proc/self/status
-```
-
-实际输出：
-
-```text
-CapEff: 0000000000000000
-NoNewPrivs: 1
-Seccomp: 0
-Seccomp_filters: 0
-```
-
-再启动一个子进程：
-
-```bash
-sh -c 'echo "child:"; grep -E "NoNewPrivs|Seccomp|CapEff" /proc/self/status'
-```
-
-实际输出：
-
-```text
-child:
-CapEff: 0000000000000000
-NoNewPrivs: 1
-Seccomp: 0
-Seccomp_filters: 0
-```
-
-这说明 `NoNewPrivs` 会继承给子进程。它一旦在某条进程链上打开，就不能被普通程序改回 0。
-
-退出这个子 shell 后再看外层：
-
-```bash
-exit
-grep -E 'NoNewPrivs|Seccomp|CapEff' /proc/self/status
-```
-
-实际输出又回到：
-
-```text
-CapEff: 0000000000000000
-NoNewPrivs: 0
-Seccomp: 0
-Seccomp_filters: 0
-```
-
-这不是因为 `no_new_privs` 被关闭了，而是因为刚才打开它的是子 shell。退出子 shell 后，我们回到了原来的外层 shell；这个外层 shell 从未打开过该开关。
-
-直觉上可以这样理解：
-
-```text
-外层 shell: NoNewPrivs=0
-  └─ setpriv 创建的子 shell: NoNewPrivs=1
-       └─ 子进程: 继续继承 NoNewPrivs=1
-
-退出子 shell 后，回到外层 shell: NoNewPrivs=0
-```
-
-沙箱会在启动不可信命令前打开它。这样即使子进程执行了 setuid 程序或带文件 capability 的程序，也不能借机获得比当前更多的权限。
+沙箱会在启动不可信命令前打开它。隔离机制负责限制"能碰什么"，但如果进程还能借 setuid 提权，隔离就被绕过了；no_new_privs 就是把这条提权路径直接焊死。它常和 seccomp 一起使用——普通进程安装 seccomp 过滤器通常也需要先打开它。
 
 ## 9. Seccomp：限制系统调用
 
-前面的机制更多是在回答“进程处在哪个世界里”：
+前面的机制回答的是"进程处在哪个世界里"：
 
 ```text
 user namespace    身份视图
@@ -839,7 +304,7 @@ capabilities      在 namespace 边界内拥有哪些特权
 no_new_privs      子进程不能再获得新权限
 ```
 
-seccomp 关注的是另一件事：这个进程还能向内核发起哪些 syscall。
+seccomp 关注的是另一件事：这个进程还能向内核发起哪些系统调用（syscall）。
 
 普通程序并不是直接操作硬件或文件系统。它要读文件、开 socket、创建进程、挂载文件系统，本质上都要通过 syscall 进入内核。例如：
 
@@ -863,37 +328,7 @@ seccomp 就是在 syscall 入口处加过滤器。过滤器可以决定：
 记录日志或通知 supervisor
 ```
 
-当前 shell 的状态可以这样看：
-
-```bash
-grep -E 'NoNewPrivs|Seccomp|Seccomp_filters' /proc/self/status
-```
-
-实验环境里的基线是：
-
-```text
-NoNewPrivs: 0
-Seccomp: 0
-Seccomp_filters: 0
-```
-
-这只表示当前 shell 没有安装 seccomp 过滤器，不表示内核不支持 seccomp。
-
-一个典型的最小实验是：安装一个 seccomp 过滤器，专门拒绝 `getpid` syscall。安装前：
-
-```text
-getpid() -> 返回当前进程 PID
-```
-
-安装后：
-
-```text
-getpid() -> -1, errno = EPERM
-```
-
-这个实验的价值在于它足够安全：`getpid` 不会改文件、不联网、不杀进程；但它能证明 seccomp 的控制点不在文件权限、不在 namespace，而在 syscall 入口。
-
-更接近真实沙箱的规则通常不会禁 `getpid`，而是限制危险 syscall，例如：
+真实沙箱的规则通常不会去禁 `getpid` 这类无害调用，而是限制危险 syscall，例如：
 
 ```text
 mount      禁止进程重新挂载文件系统
@@ -917,7 +352,7 @@ capabilities 决定进程在这个世界里有什么特权；
 seccomp 决定进程还能调用哪些内核入口。
 ```
 
-如果前面的 network namespace 是“这个世界里没有外网网卡”，那么 seccomp 禁 `socket/connect` 更像是“即使你看得到网络相关对象，也不允许你调用创建连接的内核入口”。真实沙箱通常会组合使用这些机制，而不是只依赖某一个。
+如果前面的 network namespace 是"这个世界里没有外网网卡"，那么 seccomp 禁 `socket/connect` 更像是"即使你看得到网络相关对象，也不允许你调用创建连接的内核入口"。真实沙箱通常会组合使用这些机制，而不是只依赖某一个。
 
 ## 10. 后续还需要补齐的沙箱能力
 
@@ -935,30 +370,20 @@ seccomp 决定进程还能调用哪些内核入口。
 
 但一个可用的命令执行沙箱通常还会继续补几类能力：
 
-| 能力 | 解决的问题 | 后续实验直觉 |
+| 能力 | 解决的问题 | 直观理解 |
 | --- | --- | --- |
-| rlimit / `ulimit` | 限制单进程或当前 shell 派生进程的资源 | 把 `open files` 调小，然后打开很多文件，看到 `Too many open files` |
-| cgroup v2 | 限制一组进程的 CPU、内存、进程数、IO | 把进程放进自己的 cgroup，观察 `memory.max`、`pids.max` 这类硬限制 |
-| `chroot` / `pivot_root` | 改变进程看到的根目录 | 让进程以一个临时目录为 `/`，理解为什么单独 `chroot` 不等于强沙箱 |
-| bind mount / readonly mount | 精确决定哪些目录可见、哪些只读 | 只把 workspace 挂进去，把系统目录挂成只读 |
-| tmpfs | 提供临时、退出即丢的可写空间 | 给沙箱一个假的 `/tmp` 或临时 home |
-| Landlock | 普通进程主动给自己加文件访问限制 | 不靠 root，让进程声明“只能读写这些路径” |
-| LSM: AppArmor / SELinux | 系统级强制访问控制 | 在支持的发行版上，用 profile/label 限制文件、网络和能力 |
-| 超时和进程回收 | 防止命令无限运行或遗留后台进程 | 给命令加 timeout，结束时清理整个进程组/cgroup |
-| 环境变量和 secret 隔离 | 防止 token、SSH key、配置泄漏 | 启动命令前清理环境变量，不挂载敏感目录 |
+| rlimit / `ulimit` | 限制单进程或当前 shell 派生进程的资源 | 给进程一个"最多只能用这么多"的额度，超了就报错（如 `Too many open files`） |
+| cgroup v2 | 限制一组进程的 CPU、内存、进程数、IO | 把整组进程放进一个"资源盒子"，内核按组硬性限流 |
+| `chroot` / `pivot_root` | 改变进程看到的根目录 | 让进程以为某个目录就是 `/`；但单独 chroot 不等于强沙箱（仍可能逃出） |
+| bind mount / readonly mount | 精确决定哪些目录可见、哪些只读 | 把宿主目录原样"接"进沙箱，或整棵根挂成只读、再单独开放 workspace |
+| tmpfs | 提供临时、退出即丢的可写空间 | 内存里的"一次性便签本"，卸载即消失 |
+| Landlock | 普通进程主动给自己加文件访问限制 | 不靠 root，进程自己声明"只能读写这些路径"，内核强制执行 |
+| LSM: AppArmor / SELinux | 系统级强制访问控制 | 发行版层面按 profile/label 限制文件、网络和能力 |
+| 超时和进程回收 | 防止命令无限运行或遗留后台进程 | 命令跑超时就被杀掉，退出时整棵进程树一起清理 |
+| 环境变量和 secret 隔离 | 防止 token、SSH key、配置泄漏 | 启动前清掉环境变量、不挂载敏感目录，让进程"没有秘密可以泄漏" |
 | 组合策略 | 把单点机制变成真正沙箱 | namespace 改视图，mount 控文件，cgroup 控资源，seccomp 控 syscall，no_new_privs 防提权 |
 
-接下来最适合继续手动实验的是：
-
-```text
-1. rlimit / ulimit
-2. cgroup v2
-3. chroot 和为什么它不够
-4. bind mount + readonly mount
-5. Landlock
-```
-
-这几项都能在 WSL2 里建立比较直观的认识。AppArmor/SELinux 更依赖发行版和内核配置，在当前 WSL 环境里不一定适合做第一轮手动实验。
+这些能力不是每套沙箱都会用到，但真实产品里通常按需组合：cgroup 管资源额度，Landlock 让普通进程也能给自己加文件访问规则，AppArmor/SELinux 是发行版级的强制访问控制。前面讲的 namespace、mount、seccomp 负责划边界，这些补丁负责管额度、定细节。第 11 节的 sandbox-runtime 就只用到了其中一部分，下一节看看它到底怎么选型。
 
 ## 11. Claude Code 沙箱运行时的 Linux 实现
 
@@ -1102,7 +527,7 @@ Linux 上比较关键的二进制依赖是：
 | `apply-seccomp` | `@anthropic-ai/sandbox-runtime` 包内 vendor 自带的原生静态二进制，位于 `vendor/seccomp/<arch>/apply-seccomp`，C 源码在 `vendor/seccomp-src/` | 在执行用户命令前：创建嵌套 user+PID+mount namespace → 挂载私有 `/proc` → 安装 seccomp 过滤器 → `execve` 用户命令 | `unshare(2)` + `CLONE_NEWUSER`/`CLONE_NEWPID`/`CLONE_NEWNS`、写 `uid_map`/`gid_map`/`setgroups`、`mount(2)` 挂 procfs、`prctl(PR_SET_NO_NEW_PRIVS)`、`prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog)`、`prctl(PR_SET_DUMPABLE)`、信号转发与 `waitpid(2)` |
 | `unix-block.bpf` | 新版把 BPF 规则直接编译进 `apply-seccomp`（由 `vendor/seccomp-src/seccomp-unix-block.c` 生成）；旧版是独立数据文件 | 作为 seccomp filter 数据安装到进程 | 不是可执行程序；它是 classic BPF 规则，目标是让 `socket(AF_UNIX, ...)` 和 `io_uring_setup`/`io_uring_enter`/`io_uring_register` 返回 `EPERM` |
 
-其中 `bubblewrap` 是最核心的容器化工具。它负责把前面实验过的能力组合起来：创建 namespace、配置 bind mount、把某些路径变成只读、隔离网络视图等。
+其中 `bubblewrap` 是最核心的容器化工具。它负责把前面讲过的能力组合起来：创建 namespace、配置 bind mount、把某些路径变成只读、隔离网络视图等。
 
 `socat` 用在网络代理桥接上。这个实现不是简单地把沙箱网络完全打开，而是让沙箱进程通过受控代理访问网络。Linux 上网络请求会通过 Unix domain socket 走到宿主侧代理，再由代理根据 allow/deny 域名规则决定是否放行。
 
@@ -1162,7 +587,7 @@ bwrap init（外层 PID 1，无 seccomp）
 
 **Ubuntu 24.04 有一个需要先处理的内核参数。** Ubuntu 24.04 默认开启 `kernel.apparmor_restrict_unprivileged_userns`：它允许 `unshare(CLONE_NEWUSER)`，但会从新 namespace 里剥掉 capabilities。bwrap 和 apply-seccomp 都需要"带 capabilities 的 user namespace"（bwrap 要靠它完成挂载，apply-seccomp 要靠它创建嵌套 namespace），所以在这个发行版上要先 `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`，或者给相关二进制加 AppArmor profile。这个例子也说明：沙箱可用性不仅取决于"系统有没有 namespace 接口"，还取决于"namespace 里保留不保留特权"。
 
-把它和前面的手动实验对应起来：
+把它和前面讲过的机制对应起来：
 
 ```text
 文件系统可见性  -> mount namespace / bind mount / readonly mount
