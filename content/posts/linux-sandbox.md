@@ -1,5 +1,5 @@
 +++
-title = 'Linux 沙箱机制：从 Namespace 到 Seccomp'
+title = 'Agent 沙箱是什么：拆解 Claude Code 的 sandbox-runtime Linux 沙箱机制'
 date = 2026-08-10T09:30:00+08:00
 draft = false
 summary = '梳理 Linux 自带沙箱能力的基础机制，包括 namespace、mount 隔离、capabilities、seccomp、cgroup、Landlock 等，以及它们如何组合成一个可用的命令执行沙箱；最后以 sandbox-runtime 为例拆解"用户感知特性 → 二进制 → 内核接口"的依赖链，并评估自研封装这些接口的工作量。'
@@ -7,7 +7,13 @@ tags = ['linux', 'sandbox', 'namespace', 'seccomp', 'landlock']
 categories = ['Engineering']
 +++
 
-这篇文章先不急着从定义开始。Linux 的沙箱能力很容易被讲成一串名词：namespace、capabilities、seccomp、cgroup、Landlock。真正建立直觉的方式，是从一个普通进程开始，一步一步看内核到底根据什么放行、拒绝、隔离和收紧权限。
+Agent 沙箱是什么？简单说，就是给 AI 代理（Agent）跑代码时准备的隔离环境。
+
+现在的 AI 编码工具（比如 Claude Code）会自己决定执行什么命令、读写哪些文件、装什么依赖。这些动作是代理自主做的，如果直接跑在你的机器上，一次误触发的 `rm -rf`，或者一条被诱导执行的命令，就可能把整个系统搞坏。沙箱的作用，就是把这类自主行为限制在一个笼子里：文件系统、网络、系统调用都受到约束，出了问题也只坏在笼子内部，不会波及其它。
+
+为什么值得关注？因为代理的工作方式和人是两回事。人敲命令之前会先想清楚，代理是"想好了就自己执行"，你拦不住它中途改主意。越是想放手让代理多干活，越得先把边界划清楚，沙箱就是这条边界。
+
+这篇文章要讲的就是 Claude Code 的 Linux 沙箱是怎么实现的，对应的是 anthropic-experimental/sandbox-runtime 这个仓库（npm 包名 `@anthropic-ai/sandbox-runtime`）。前面第 0 到 10 节先把 Linux 自带的机制讲清楚——namespace、mount 隔离、capabilities、seccomp、cgroup、Landlock——第 11 节再拆开看 sandbox-runtime 是怎么把"用户配置的规则"翻译成"内核能理解的系统调用"的。
 
 实验环境是 WSL2 里的 Ubuntu 24.04。WSL2 不等同于完整服务器发行版：它适合观察 namespace、user namespace、mount namespace、cgroup v2、Landlock 等基础机制，但 AppArmor/SELinux 这类 LSM 在这里未必启用，网络隔离行为也可能和标准 Linux 虚拟机不同。
 
