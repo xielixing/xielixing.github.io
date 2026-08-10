@@ -1,8 +1,8 @@
 +++
 title = 'Linux 沙箱机制：从 Namespace 到 Seccomp'
-date = 2026-08-09T11:15:00+08:00
+date = 2026-08-10T09:30:00+08:00
 draft = false
-summary = '梳理 Linux 自带沙箱能力的基础机制，包括 namespace、mount 隔离、capabilities、seccomp、cgroup、Landlock 等，以及它们如何组合成一个可用的命令执行沙箱。'
+summary = '梳理 Linux 自带沙箱能力的基础机制，包括 namespace、mount 隔离、capabilities、seccomp、cgroup、Landlock 等，以及它们如何组合成一个可用的命令执行沙箱；最后以 sandbox-runtime 为例拆解"用户感知特性 → 二进制 → 内核接口"的依赖链，并评估自研封装这些接口的工作量。'
 tags = ['linux', 'sandbox', 'namespace', 'seccomp', 'landlock']
 categories = ['Engineering']
 +++
@@ -865,19 +865,24 @@ bwrap: Linux 上安装的原生可执行程序，负责真正创建沙箱
 Linux kernel: 提供 namespace、mount、seccomp、exec 等系统调用
 ```
 
-也就是说，TypeScript 本身没有直接调用 `clone(2)` / `mount(2)` 这些 C 风格系统调用。它通常只是通过 Node/Bun 的 `child_process.spawn` 启动一个外部命令：
+也就是说，TypeScript 本身没有直接调用 `clone(2)` / `mount(2)` 这些 C 风格系统调用。它通常只是通过 Node/Bun 的 `child_process.spawn` 启动一个外部命令。以 `linux-sandbox-utils.ts` 里 `wrapCommandWithSandboxLinux` 拼出的强沙箱参数为例，形状大致是：
 
 ```ts
 spawn("bwrap", [
+  "--new-session", "--die-with-parent",
   "--unshare-net",
+  "--unshare-pid",
+  "--unshare-user", "--cap-drop", "ALL",
   "--ro-bind", "/", "/",
   "--bind", workspace, workspace,
+  "--dev", "/dev",
+  "--proc", "/proc",
   "--",
   "bash", "-c", command,
 ])
 ```
 
-然后 `bwrap` 这个原生程序再去调用 Linux 内核接口。`clone(2)`、`unshare(2)`、`mount(2)`、`execve(2)` 里的 `(2)` 不是函数参数，也不是版本号，而是 Linux man page 的章节编号。常见编号可以这样理解：
+然后 `bwrap` 这个原生程序再去调用 Linux 内核接口。每一组参数背后都是一类系统接口：`--unshare-*` 对应 `clone(2)`/`unshare(2)` 的 namespace 标志，`--ro-bind`/`--bind` 对应 `mount(2)` 的 bind mount，`--proc`/`--dev` 对应挂载 procfs 和最小化的 `/dev`，`--cap-drop ALL` 对应清空 capabilities，`--die-with-parent` 对应 `prctl(2)` 的 parent-death signal。`clone(2)`、`unshare(2)`、`mount(2)`、`execve(2)` 里的 `(2)` 不是函数参数，也不是版本号，而是 Linux man page 的章节编号。常见编号可以这样理解：
 
 | 写法 | 含义 |
 | --- | --- |
@@ -897,11 +902,12 @@ spawn("bwrap", [
 | 看不到或写不了敏感路径，比如 `~/.ssh`、token、配置目录 | `bwrap`，路径扫描可能辅助用 `rg` | mount namespace、bind mount、tmpfs、路径遮蔽 | 不是只靠应用层判断“别访问”，而是让沙箱进程看到一棵被重新布置过的目录树；敏感路径可以不挂入、只读挂入，或用空目录/tmpfs 覆盖 |
 | 沙箱里的 `/tmp` 像一次性草稿纸 | `bwrap` | `mount(2)` + `tmpfs` | 挂载一个内存里的临时文件系统。命令可以写临时文件，但这些内容不污染宿主原来的目录 |
 | 沙箱有独立的文件系统挂载表 | `bwrap` | `clone(2)` / `unshare(2)` + `CLONE_NEWNS` | 创建 mount namespace。可以把它理解成给进程一份自己的“挂载地图”，之后它看到的挂载关系可以和宿主不同 |
-| 里面看起来是 root，但不是宿主机 root | `bwrap` | `clone(2)` / `unshare(2)` + `CLONE_NEWUSER`，以及 `/proc/<pid>/uid_map`、`gid_map`、`setgroups` | 创建 user namespace，并配置内外 uid/gid 映射。进程在沙箱里可以显示为 root，但映射到宿主上仍然是普通用户 |
+| 沙箱进程没有特权，被攻破后也难以提权 | `bwrap` | `clone(2)` / `unshare(2)` + `CLONE_NEWUSER`，以及 `/proc/<pid>/uid_map`、`gid_map`、`setgroups` | 创建 user namespace 并写入内外 uid/gid 映射（默认 1:1，保持原 uid）。user namespace 的关键是：进程获得的 capabilities 只对这个 namespace 内的资源生效。再配合 `--cap-drop ALL` 清空全部 capability，沙箱进程对宿主资源没有任何特权，`mount`、`ptrace`、改网络配置等操作都会被内核拒绝 |
 | 默认断网，命令找不到外网出口 | `bwrap` | `clone(2)` / `unshare(2)` + `CLONE_NEWNET` | 创建 network namespace。沙箱有自己的网卡、IP、路由表；如果不给它 `eth0` 和 default route，它就没有通向外网的路 |
-| 只能通过受控代理联网 | `socat` | `socket(2)`、`bind(2)`、`listen(2)`、`accept(2)`、`connect(2)`、`read(2)`、`write(2)` | `socat` 在宿主和沙箱之间搭一个 socket 桥。沙箱里的请求先过代理，再由代理按 allow/deny 规则决定是否放行 |
-| 不能通过本地 Unix socket 绕过网络代理 | `apply-seccomp` + `unix-block.bpf` | `prctl(2)`、`PR_SET_NO_NEW_PRIVS`、`PR_SET_SECCOMP`、`seccomp(2)`、classic BPF filter | seccomp 给进程安装系统调用过滤器。这里的过滤规则会让用户命令创建 `AF_UNIX` socket 时被内核拒绝，避免绕过 HTTP/HTTPS 代理去连 Docker socket、SSH agent 等本地服务 |
-| 只能看到沙箱内进程 | `bwrap` | `clone(2)` / `unshare(2)` + `CLONE_NEWPID`，再用 `mount(2)` 挂载匹配的 `procfs` | PID namespace 给进程一棵新的进程树；重新挂 `/proc` 后，`ps` 这类工具看到的就是沙箱里的进程，而不是宿主机全部进程 |
+| 只能通过受控代理联网 | `socat` | `socket(2)`、`bind(2)`、`listen(2)`、`accept(2)`、`connect(2)`、`read(2)`、`write(2)` | 和 `--unshare-net` 配合使用：沙箱里根本没有外网网卡，所有流量只能走挂在 Unix socket 上的代理桥。宿主侧 `socat` 监听一个 Unix socket 并转发到代理端口；沙箱内再启动一个 `socat`，把 `127.0.0.1:3128`（HTTP）和 `127.0.0.1:1080`（SOCKS）转回那个 Unix socket。请求经过代理时，由 allow/deny 域名规则决定是否放行 |
+| 不能通过本地 Unix socket 绕过网络代理 | `apply-seccomp` + `unix-block.bpf` | `prctl(2)`、`PR_SET_NO_NEW_PRIVS`、`PR_SET_SECCOMP`、`seccomp(2)`、classic BPF filter | seccomp 给进程安装系统调用过滤器。规则让 `socket(AF_UNIX, ...)` 返回 EPERM，避免绕过 HTTP/HTTPS 代理去连 Docker socket、SSH agent 等本地服务；同时挡掉 `io_uring_setup`/`io_uring_enter`/`io_uring_register`，因为 Linux 5.19+ 可以用 `IORING_OP_SOCKET` 绕过 `socket()` 这条规则 |
+| 只能看到沙箱内进程 | `bwrap` + `apply-seccomp` | `clone(2)` / `unshare(2)` + `CLONE_NEWPID`，再用 `mount(2)` 挂载匹配的 `procfs` | PID namespace 给进程一棵新的进程树；重新挂 `/proc` 后，`ps` 这类工具看到的就是沙箱里的进程，而不是宿主机全部进程。apply-seccomp 还会再套一层嵌套 PID namespace，让用户命令连 socat、bash 包装进程都看不到，防止通过 ptrace 它们来绕过 seccomp |
+| 命令退出后不留后台进程残留 | `bwrap` | `setsid(2)`、`prctl(2)` + `PR_SET_PDEATHSIG` | `--new-session` 让沙箱进程自成会话；`--die-with-parent` 让内核在 bwrap 退出时向沙箱进程发 SIGKILL，命令里用 `&` 拉起的后台进程也会被一并带走，不会逃逸到宿主 |
 | 隔离 hostname、IPC、cgroup 视图等其他系统视角 | `bwrap` 或容器运行时 | `CLONE_NEWUTS`、`CLONE_NEWIPC`、`CLONE_NEWCGROUP` | 分别隔离 hostname/domainname、System V IPC / POSIX message queue、进程看到的 cgroup 层级。这些不是每个沙箱配置都必须启用，但属于同一套 namespace 思路 |
 | 限制 CPU、内存、进程数、IO 等资源 | runtime、systemd、容器工具，不一定是单个二进制 | cgroup v2、cgroupfs、systemd slice/scope | cgroup 把进程放进资源控制组，内核按组限制资源。直观说，就是给沙箱一个“最多只能用这么多”的额度 |
 | 更细粒度限制文件读写 | runtime 或 helper，可能直接调用 syscall | Landlock：`landlock_create_ruleset`、`landlock_add_rule`、`landlock_restrict_self` | Landlock 允许普通进程给自己加文件访问规则。规则生效后，即使进程原本有某些文件权限，也会被这层规则再次收窄 |
@@ -925,6 +931,12 @@ Claude Code / sandbox runtime
 如果不用 `bwrap`，直接写 C 代码，形状大概会是：
 
 ```c
+// 非特权进程的第一步：创建 user namespace，拿到只对本 namespace 生效的 CAP_SYS_ADMIN
+unshare(CLONE_NEWUSER);
+write_file("/proc/self/setgroups", "deny");
+write_file("/proc/self/uid_map",   "0 1000 1");
+write_file("/proc/self/gid_map",   "0 1000 1");
+
 unshare(CLONE_NEWNS | CLONE_NEWNET);
 mount("/", "/", NULL, MS_BIND | MS_REC, NULL);
 mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY | MS_BIND | MS_REC, NULL);
@@ -945,8 +957,8 @@ Linux 上比较关键的二进制依赖是：
 | `bwrap` / `bubblewrap` | Linux 发行版包，一般通过 `apt install bubblewrap`、`dnf install bubblewrap`、`pacman -S bubblewrap` 安装 | 由 TS 层拼参数并 `spawn("bwrap", args)`；负责创建命令沙箱 | namespace: `clone(2)` / `unshare(2)`；mount: `mount(2)` / bind mount / readonly remount；process: `fork(2)` / `clone(2)` / `execve(2)`；还会使用 procfs、tmpfs、`/dev` 相关挂载能力 |
 | `socat` | Linux 发行版包，一般通过 `apt install socat`、`dnf install socat`、`pacman -S socat` 安装 | 在宿主和沙箱之间做 Unix socket / TCP 代理桥接，让沙箱里的 HTTP/SOCKS 代理请求转到宿主侧代理 | socket API: `socket(2)`、`bind(2)`、`listen(2)`、`accept(2)`、`connect(2)`、`read(2)` / `write(2)`；会用到 Unix domain socket 和 TCP socket |
 | `rg` / `ripgrep` | Linux 发行版包或已有系统工具 | 辅助扫描 deny path / 危险路径，帮助生成 mount 规则；它不是沙箱边界本身 | 普通文件系统接口，如 `open(2)`、`read(2)`、`stat(2)`、目录遍历等 |
-| `apply-seccomp` | `@anthropic-ai/sandbox-runtime` 包内 vendor 自带的原生二进制，位于 `vendor/seccomp/<arch>/apply-seccomp` | 在执行用户命令前安装 seccomp 过滤器，然后再 `execve` 用户命令 | `prctl(PR_SET_NO_NEW_PRIVS)`、`prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog)`、`execve(2)` |
-| `unix-block.bpf` | `@anthropic-ai/sandbox-runtime` 包内 vendor 自带的预生成 BPF 过滤器，位于 `vendor/seccomp/<arch>/unix-block.bpf` | 作为 seccomp filter 数据传给 `apply-seccomp`，用于阻断 Unix socket 创建 | 不是可执行程序；它是给 seccomp 使用的 BPF 规则，目标是让 `socket(AF_UNIX, ...)` 返回 `EPERM` |
+| `apply-seccomp` | `@anthropic-ai/sandbox-runtime` 包内 vendor 自带的原生静态二进制，位于 `vendor/seccomp/<arch>/apply-seccomp`，C 源码在 `vendor/seccomp-src/` | 在执行用户命令前：创建嵌套 user+PID+mount namespace → 挂载私有 `/proc` → 安装 seccomp 过滤器 → `execve` 用户命令 | `unshare(2)` + `CLONE_NEWUSER`/`CLONE_NEWPID`/`CLONE_NEWNS`、写 `uid_map`/`gid_map`/`setgroups`、`mount(2)` 挂 procfs、`prctl(PR_SET_NO_NEW_PRIVS)`、`prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog)`、`prctl(PR_SET_DUMPABLE)`、信号转发与 `waitpid(2)` |
+| `unix-block.bpf` | 新版把 BPF 规则直接编译进 `apply-seccomp`（由 `vendor/seccomp-src/seccomp-unix-block.c` 生成）；旧版是独立数据文件 | 作为 seccomp filter 数据安装到进程 | 不是可执行程序；它是 classic BPF 规则，目标是让 `socket(AF_UNIX, ...)` 和 `io_uring_setup`/`io_uring_enter`/`io_uring_register` 返回 `EPERM` |
 
 其中 `bubblewrap` 是最核心的容器化工具。它负责把前面实验过的能力组合起来：创建 namespace、配置 bind mount、把某些路径变成只读、隔离网络视图等。
 
@@ -956,11 +968,11 @@ Linux 上比较关键的二进制依赖是：
 
 seccomp 这里主要用于阻断 Unix domain socket 创建。原因是：即使外网被 network namespace 和代理限制了，本地 Unix socket 仍可能成为绕过路径。例如某些系统服务、Docker socket、agent socket 一旦暴露，权限可能比普通网络请求大得多。这个实现会带一个 `apply-seccomp` helper 和一个预生成的 `unix-block.bpf` 过滤器；运行时由 helper 调用内核接口安装 seccomp 规则，再 exec 真正的用户命令。
 
-这两个文件可以这样理解：
+这两个东西可以这样理解：
 
 ```text
-apply-seccomp = seccomp 规则安装器，是可以执行的原生程序
-unix-block.bpf = seccomp 规则数据，不是可执行程序
+apply-seccomp = seccomp 规则安装器 + 嵌套 namespace 搭建者，是可以执行的原生程序
+unix-block.bpf = seccomp 规则数据（新版本直接编译进 apply-seccomp，不再单独携带）
 ```
 
 它们解决的是同一个场景：防止沙箱里的命令通过本地 Unix domain socket 绕过网络沙箱。比如普通外网已经被 network namespace 切掉了，HTTP/HTTPS 访问也必须经过受控代理；但如果进程还能随便创建 Unix socket，它可能去连接 `/var/run/docker.sock`、SSH agent、GPG agent、系统服务 socket 或其他本地 agent socket。这类访问不一定经过域名 allow/deny 代理，因此可能变成绕过路径。
@@ -978,6 +990,35 @@ unix-block.bpf = seccomp 规则数据，不是可执行程序
 ```
 
 这里不能一开始就安装 `unix-block.bpf`，因为代理桥接用的 `socat` 自己也需要 Unix socket。先让 `socat` 启动，再用 `apply-seccomp` 给真正的用户命令加限制，才能同时保留受控代理能力，并阻断用户命令自己创建新的 Unix socket。
+
+### 11.1 apply-seccomp 为什么还要嵌套 namespace
+
+`apply-seccomp` 不是简单地"安装过滤器然后 exec"，它会在外层 bwrap 沙箱里再创建一层嵌套的 user + PID + mount namespace，并重新挂载 `/proc`。原因：如果用户命令和 `socat`、bash 包装脚本住在同一个 PID namespace 里，用户命令就能看到这些"没有装过滤器"的进程，攻击者可以尝试 `ptrace` 它们或读写 `/proc/<pid>/mem`，从而绕过 seccomp 限制。放进嵌套 PID namespace 后，用户命令视角里的 `/proc` 只剩自己这棵小进程树，bwrap 的 init、bash 包装、socat 都不可见、不可寻址。
+
+嵌套后的进程布局：
+
+```text
+bwrap init（外层 PID 1，无 seccomp）
+└─ bash 包装 / socat 桥（外层，无 seccomp）
+   └─ apply-seccomp（外层，等待内层退出并转发退出码）
+      ═══════ 嵌套 PID namespace 边界 ═══════
+      └─ apply-seccomp（内层 PID 1，PR_SET_DUMPABLE=0，负责收割子进程、转发信号）
+         └─ 用户命令（内层 PID 2，seccomp 已生效）
+
+用户命令的视角：/proc 里只有自己的进程树
+```
+
+内层 PID 1 会设置 `PR_SET_DUMPABLE=0`，让自己也不可被 ptrace/转储；它还负责把外部信号转发给用户命令（PID 1 如果不处理信号，外面发来的 `SIGTERM` 会被静默丢弃）。安装顺序是：`unshare(CLONE_NEWPID|CLONE_NEWNS)`（没有特权时先 `unshare(CLONE_NEWUSER)`，再写 `/proc/self/setgroups`、`uid_map`、`gid_map`）→ `fork` → 挂载私有 `/proc` → `prctl(PR_SET_NO_NEW_PRIVS)` → `prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &bpf)` → `execve` 用户命令。任何一步失败都会中止运行，绝不降级成"没有隔离地执行"。
+
+### 11.2 Linux 实现的几个平台细节
+
+**路径配置只支持字面路径，不支持通配符。** macOS 的 Seatbelt profile 支持 git 风格 glob（`**/*.ts` 这类模式）；Linux 的配置会直接翻译成 bwrap 的 bind mount 参数，写什么路径就保护什么路径，没有把 glob 展开成多个挂载点的逻辑，所以同样的配置在 Linux 上要用完整字面路径。
+
+**bind mount 只能遮蔽"已经存在"的文件。** 用 `--ro-bind /dev/null <path>` 去遮一个不存在的路径时，bwrap 会在宿主文件系统上创建一个空的挂载点文件；命令结束后，这个"幽灵文件"会留在工作目录里（比如 `.bashrc`、`.gitconfig`）。sandbox-runtime 为此维护了一套挂载点清理逻辑，并且只在没有其他沙箱同时运行时才删除——删早了会让还在运行的沙箱的遮蔽失效。
+
+**危险路径的强制保护靠 ripgrep 扫描。** 除了用户配置，还有一批"永远禁止写入"的路径：`.bashrc`、`.zshrc`、`.gitconfig`、`.mcp.json`、`.ripgreprc`、`.claude/commands/`、`.claude/agents/`、`.git/hooks/`、`.git/config`、`.vscode/`、`.idea/` 等。Linux 上 bind 规则只对已存在的路径生效，所以运行时用一次 ripgrep 扫描允许写的目录（默认往下 3 层，可配 1-10 层），把扫到的危险文件/目录转成额外的 deny 挂载参数。这就是 `ripgrep` 在这个实现里的角色：不是沙箱边界，而是"把配置翻译成挂载规则"之前的路径扫描器。
+
+**Ubuntu 24.04 有一个需要先处理的内核参数。** Ubuntu 24.04 默认开启 `kernel.apparmor_restrict_unprivileged_userns`：它允许 `unshare(CLONE_NEWUSER)`，但会从新 namespace 里剥掉 capabilities。bwrap 和 apply-seccomp 都需要"带 capabilities 的 user namespace"（bwrap 要靠它完成挂载，apply-seccomp 要靠它创建嵌套 namespace），所以在这个发行版上要先 `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`，或者给相关二进制加 AppArmor profile。这个例子也说明：沙箱可用性不仅取决于"系统有没有 namespace 接口"，还取决于"namespace 里保留不保留特权"。
 
 把它和前面的手动实验对应起来：
 
@@ -1002,3 +1043,58 @@ CLI 权限层决定什么时候启用、什么时候提示、什么时候允许�
 ```
 
 这个分层也解释了为什么“沙箱能力”看起来像产品功能，实际依赖的是操作系统能力。产品代码负责把权限意图翻译成配置；真正执行拒绝和隔离的，还是 Linux 内核和围绕它的工具链。
+
+### 11.3 如果自己封装这些底层接口，工作量有多大
+
+“调用接口”本身并不贵，贵的是接口之间的顺序约束、失败处理和语义映射。可以用 `bwrap` 和 `apply-seccomp` 的真实代码规模来感受一下：
+
+| 组件 | 规模 | 主要工作内容 |
+| --- | --- | --- |
+| `bubblewrap.c` | 约 100KB（2500+ 行 C） | CLI 参数解析、namespace 编排、mount 视图构建、进程模型、错误降级 |
+| `bind-mount.c` | 约 16KB | bind mount 底层封装：目标不存在时的处理、挂载点创建、参数校验 |
+| `utils.c` / `network.c` | 约 27KB | 公共工具、/proc 读写、网络相关封装 |
+| 合计（不含测试） | 约 150KB，约 4000 行 C | 多年打磨的成熟实现 |
+| `apply-seccomp.c` | 约 36KB，约 1000 行 C | 嵌套 namespace 编排、uid/gid 映射、BPF 安装、信号转发与子进程收割 |
+
+对照功能拆开看，各部分的工作量大概是：
+
+| 模块 | 依赖的接口 | 大致工作量 | 难点在哪 |
+| --- | --- | --- | --- |
+| namespace 编排 | `unshare(2)`/`clone(2)` + 写 `uid_map`/`gid_map`/`setgroups` | 500-800 行 C | 顺序约束（先 user namespace，再 mount/PID）、映射写入时机、`fork` 与 `CLONE_NEWPID` 的配合 |
+| mount 视图构建 | `mount(2)` + `MS_BIND`/`MS_REC`/`MS_REMOUNT`/`MS_RDONLY`、tmpfs、procfs、devtmpfs | 1200-1500 行 C | mount propagation 处理、只读 remount 的顺序、目标路径不存在、跨发行版差异 |
+| seccomp 过滤 | `prctl(2)`/`seccomp(2)` + BPF | 用 libseccomp 几百行；手写 BPF 更多 | 架构相关（x86-64/arm64 的 syscall 号不同）、x32 ABI、多个过滤器组合、USER_NOTIF 观察 |
+| 进程监督 | `fork(2)`/`execve(2)`/`sigaction(2)`/`waitpid(2)`/`prctl(PR_SET_PDEATHSIG)` | 300-500 行 C | 信号转发、僵尸收割、后台进程回收 |
+| 代理桥接 | `socket(2)`/`connect(2)` 等 | 约 200 行配置 | 基本无难点，直接复用 `socat` |
+
+经验性的结论：
+
+```text
+最小可用版（userns + 只读根 + bind 开放可写路径 + exec）：
+  熟悉 Linux 系统编程的人约 2-4 周，500-800 行 C。
+
+bwrap 级别（覆盖所有边界情况、跨发行版、错误降级）：
+  数月级，约 4000 行 C，测试量与实现量相当。
+
+seccomp 部分：优先复用 libseccomp，不要手写 BPF。
+```
+
+还有一类容易被低估的工作：**配置语义到挂载规则的翻译**。sandbox-runtime 自己的 `linux-sandbox-utils.ts` 有几千行 TypeScript，大部分在算“哪个 deny 路径要 `--ro-bind /dev/null`、哪个目录要 `--tmpfs` 覆盖、allow 路径被 deny 的 tmpfs 覆盖后要不要重新 bind 回来”。如果把 bwrap 换成自研实现，这层翻译逻辑和它的边界情况（符号链接、路径不存在、嵌套目录互相覆盖）都要重新走一遍。
+
+最后，这套实现对系统接口的依赖收敛起来其实很集中，可以按重要程度排个序：
+
+```text
+1. user namespace（CLONE_NEWUSER + uid_map/gid_map）：
+   非特权进程获得“只对 namespace 内资源生效”的特权的基础。没有它，普通用户连挂载类操作都做不了
+2. mount namespace + bind mount（CLONE_NEWNS + mount(2)）：
+   文件视图隔离的全部基础：哪些目录可见、哪些可写、哪些被遮蔽
+3. network namespace（CLONE_NEWNET）：
+   “默认断网”的前提；代理再把允许的流量接回来
+4. PID namespace + procfs（CLONE_NEWPID + 挂载 procfs）：
+   进程树隔离，以及让 /proc 视图和隔离后的进程树配套
+5. seccomp（prctl(2) / seccomp(2)）：
+   syscall 级兜底，堵住文件/网络隔离管不到的绕过路径（Unix socket、io_uring）
+6. 进程原语（fork/execve/signal/waitpid）+ socket 转发工具：
+   搭建和运行沙箱的脚手架，socat 即可
+```
+
+前四项都在 `bwrap` 里，第五项是 `apply-seccomp`，第六项是 `socat`。评估另一个系统能不能跑这套沙箱时，逐项确认这些能力是否存在（或有没有等价物），比直接问“能不能装 bwrap”要准确得多；缺了 user namespace 或 syscall 过滤这类关键项，工作量就不是“封装”而是“重新设计”了。
