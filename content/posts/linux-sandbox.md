@@ -1,5 +1,5 @@
 +++
-title = 'Claude Code 的 Linux 沙箱'
+title = 'Agent 沙箱介绍'
 date = 2026-08-10T09:30:00+08:00
 draft = false
 summary = '梳理 Linux 自带沙箱能力的基础机制，包括 namespace、mount 隔离、capabilities、seccomp、cgroup、Landlock 等，以及它们如何组合成一个可用的命令执行沙箱；最后以 sandbox-runtime 为例拆解"用户感知特性 → 二进制 → 内核接口"的依赖链，并评估自研封装这些接口的工作量。'
