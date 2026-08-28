@@ -150,16 +150,25 @@ body {
   content: "Figure " counter(figure-counter) ": ";
 }
 
-.post-content figcaption,
-.post-content figcaption a,
-.md-content figcaption,
-.md-content figcaption a {
+/* Higher specificity than theme's .md-content figure>figcaption (bold, dark, 16px)
+   so captions render like Lil'Log's: gray 15px regular weight, centered. */
+.post-content figure > figcaption,
+.md-content figure > figcaption {
   text-align: center;
   width: 75%;
   margin: 10px auto 35px;
   line-height: 1.35;
   color: #888;
   font-size: 15px;
+  font-weight: normal;
+}
+
+.post-content figure > figcaption a,
+.md-content figure > figcaption a {
+  color: #888;
+  font-size: 15px;
+  font-weight: normal;
+  text-decoration: none;
 }
 
 /* ===== Lil'Log tables: 14px headers, tighter cells ===== */
