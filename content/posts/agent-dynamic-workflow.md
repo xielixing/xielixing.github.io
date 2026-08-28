@@ -65,3 +65,16 @@ return audits.filter(Boolean)
 - **pipeline(...)**：把一组输入逐个送过同一道工序——这里把 `found.files` 里的每个文件交给一个新的 subagent 去审计，它们并行执行互不阻塞。
 - **label**：给 subagent 起个标签，方便在运行界面里区分各个并行任务。
 - **filter(Boolean)**：过滤掉执行失败的 subagent 返回的 `null`（agent 失败时是 `null`），只保留成功的结果——这就是最终产出。
+
+## Dynamic Workflows 的限制
+
+这是claude code的dynamic workflows的限制：
+
+| 限制 | 原因 |
+| --- | --- |
+| 运行中途不能接受用户输入 | 只有 agent 的权限提示（permission prompts）才能暂停运行。如果需要在阶段之间做人工确认（sign-off），就让每个阶段各自作为一个独立的工作流运行 |
+| workflow 自身不能直接访问文件系统或执行 shell 命令 | 文件的读写和命令执行都由 agents 完成，脚本只负责协调（coordinate）agents |
+| 不支持加载模块：脚本里包含 `import()` 会在运行开始前就失败 | 脚本主体是纯 JavaScript。需要用到第三方库的工作，请放进 agent 的任务里执行 |
+| 最多 16 个并发 agents；当 Claude Code 可用的 CPU 较少时数量会更少（包括在受 CPU 限制的容器内） | 限制本地资源的使用 |
+| 在 fan-out（扇出）场景中，与第一个 agent 共享 prompt-cache 前缀的 agents，默认会在第一个 agent 启动后最多 5 秒才开始启动 | 除了第一个 agent 外，其余 agent 都直接读取第一个 agent 缓存好的前缀，而不是各自对未缓存的内容重新处理一遍 |
+| 每次运行最多总共 1,000 个 agents | 防止失控的循环（runaway loops） |
