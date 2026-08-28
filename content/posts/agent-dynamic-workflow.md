@@ -20,3 +20,5 @@ Anthropic 在 Claude Code v2.1.154 版本之后发布了Dynamic Workflows的特�
 来源：[Claude Code 官方文档 · Workflows](https://code.claude.com/docs/en/workflows)
 
 workflows可以把plan的过程放到代码里面，可以精心的把上面提到的subagents、skills、agent teams编排到工作流里面，可以精确的指定不同subagent需要用到的上下文，workflow的脚本负责编排，和保存中间过程的值，因此可以使得最终产出的上下文只有最终的答案。把这个编排的过程放到脚本里面最直观的意义就是这个过程可重复(虽然skills也是让流程可重复，但是他的约束性不如dynamic workflow，因为编排的部分都用脚本安排了)，更重要的是让不同的agents给出答案之前可以对抗性的评估彼此的运行结果，当然这里有很多常见的模式，在后面会详细描述，总的来说dynamic workflow运行出来的结果不管是从流程的编排来说还是给答案的准确率来说都会有提升。
+
+在Claude code中使用dynamic workflow给了两种方式：1：使用prompt触发，比如输入：ultracode: audit every API endpoint under src/routes/ for missing auth checks 其中有ultracode或者workflows的这两个关键字的时候会自动触发，2：使用/effort ultracode
