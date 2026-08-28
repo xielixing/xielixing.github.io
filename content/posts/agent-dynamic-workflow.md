@@ -6,17 +6,17 @@ draft = false
 
 ## 什么是 Dynamic Workflows
 
-Anthropic 在 Claude Code v2.1.154 版本之后发布了Dynamic Workflows的特性，一个Dynamic Workflow脚本会编排很多subagents去并行的处理事情，有一个运行时会去后台执行这段脚本来完成人类的任务。
+Anthropic 在 Claude Code v2.1.154 版本之后发布了Dynamic Workflows的特性，一个Dynamic Workflow脚本会编排很多subagents去并行的处理事情，这段脚本会由一个运行时去执行
 
 ## 什么时候需要 Dynamic Workflows
 
-使用Dynamic Workflow的场景通常是你需要的任务过于复杂，需要很多个subagents协同工作才可以完成，比如你需要对一个超大的代码仓进行迁移，开放性研究问题需要交叉验证等
+如果你的任务非常复杂，需要非常多的subagents协同完成，比如对超大代码仓进行迁移、开放性研究问题交叉验证之后给出结论等，都可以尝试dynamic workflows。
 
-### 为什么需要 Dynamic Workflows
+### Dynamic Workflows从根本来说解决了什么问题
 
-当你让默认的 Claude Code harness 执行任务时，它需要在同一个上下文窗口里同时完成规划和执行。对很多编码任务来说，这种做法非常高效；但在长时间运行、大规模并行、高度结构化或对抗性的任务上，它可能会失效。
+Claude Code在执行任务的时候，如果在同一个上下文窗口进行规划(决定工作流如何编排)和执行(执行对应的工作流)会导致上下文占用过多，虽然Claude Code已经可以在绝大部分场景表现得足够好了，但是在之后提到的一些典型场景：大规模并行、高度结构化或对抗性验证的任务上，表现的可能不太好，根本原因还是完成任务需要的上下文太长。
 
-这是因为 Claude 在单个上下文窗口里处理复杂任务的时间越长，就越容易陷入几种特定的失败模式：
+比如我们常见的agent会犯的一些问题：
 
 - **Agentic laziness（代理惰性）**：Claude 在处理某个特别复杂的多部分任务时，可能在只完成部分进度后就宣告任务完成，例如一次安全审计有 50 个条目，它只处理了 35 个就停了。
 - **Self-preferential bias（自我偏好偏差）**：Claude 倾向于偏爱自己的结果或发现，尤其是当它被要求按评分标准（rubric）核验或评判自己的产出时。
