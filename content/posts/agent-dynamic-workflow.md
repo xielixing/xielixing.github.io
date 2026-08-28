@@ -67,6 +67,40 @@ workflows可以把plan的过程放到代码里面，可以精心的把上面提�
 
 来源：[Claude 官方博客 · A Harness for Every Task: Dynamic Workflows in Claude Code](https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code)
 
+## 使用 Dynamic Workflows 的常用模式
+
+你可以直接让 Claude 创建一个 dynamic workflow 就开始使用；也可以使用触发词「ultracode」，确保 Claude Code 会创建一个 workflow。
+
+但建立起对 dynamic workflows 工作原理的心智模型（mental model），能帮你理解什么时候该用它们，以及如何通过 prompt 引导 Claude。
+
+下面是 Claude 构建 workflow 时可能会用到、也会组合起来使用的一些常见模式：
+
+![Dynamic Workflows 常见模式总览](/images/agent-dynamic-workflow-patterns.png)
+
+### Classify-and-act（分类并行动）
+
+用一个分类（classifier）agent 判断任务的类型，然后根据任务类型把任务路由（route）给不同的 agents，或选择不同的行为分支；也可以把分类器放在最后，用来决定如何输出结果。
+
+### Fan-out-and-synthesize（扇出并汇总）
+
+把任务拆成许多更小的步骤，每个步骤跑一个 agent，最后把这些结果汇总（synthesize）起来。当小步骤数量很大、或者每个步骤都受益于自己干净的上下文窗口（互不干扰、不交叉污染）时，这个模式尤其有用。汇总这一步是一个屏障（barrier）——它会等所有扇出的 agents 都完成，再把它们的结构化输出合并成一个结果。
+
+### Adversarial verification（对抗性验证）
+
+对每个派生的 agent，再派生一个独立的 agent，去对抗性地核验它的输出是否符合评分标准（rubric）或准则。
+
+### Generate-and-filter（生成并筛选）
+
+围绕一个主题生成一批想法，再按评分标准或核验结果进行筛选，去重（dedupe）后只返回质量最高、经过检验的想法。
+
+### Tournament（锦标赛）
+
+不是分工，而是让 agents 同台竞争：派生 N 个 agents，各自用不同的方法尝试同一个任务，再由 prompt 或模型用评判 agent 进行两两对决（pairwise）式的评判，直到产生赢家。
+
+### Loop until done（循环直到完成）
+
+对于工作量未知的任务，循环派生 agents，直到满足某个停止条件（比如没有新的发现、或日志里不再有错误）为止，而不是固定跑固定轮数。
+
 ## 如何触发 Dynamic Workflows
 
 在Claude code中使用dynamic workflow给了两种方式：1：使用prompt触发，比如输入：ultracode: audit every API endpoint under src/routes/ for missing auth checks 其中有ultracode或者workflows的这两个关键字的时候会自动触发，2：使用/effort ultracode
