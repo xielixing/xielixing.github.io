@@ -24,6 +24,9 @@ buildExpired = false
   disableSpecial1stPost = true
   hideMeta = false
 
+  [params.label]
+    text = "Lixing's Blog"
+
   [params.homeInfoParams]
     Title = "👋 Welcome to Xie Lixing's Blog"
     Content = "Hi, this is Xie Lixing. I document my learning notes here since 2026."

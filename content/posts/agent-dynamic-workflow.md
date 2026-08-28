@@ -75,9 +75,10 @@ workflows可以把plan的过程放到代码里面，可以精心的把上面提�
 
 下面是 Claude 构建 workflow 时可能会用到、也会组合起来使用的一些常见模式：
 
-![Dynamic Workflows 常见模式总览](/images/agent-dynamic-workflow-patterns.png)
-
-（图片转载自 Thariq (@trq212) 的[推文](https://x.com/trq212/status/2061907337154367865)，原文见 [Claude 官方博客](https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code)）
+<figure>
+  <img src="/images/agent-dynamic-workflow-patterns.png" alt="Dynamic Workflows 常见模式总览">
+  <figcaption>图片转载自 Thariq (@trq212) 的<a href="https://x.com/trq212/status/2061907337154367865">推文</a>，原文见 <a href="https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code">Claude 官方博客</a></figcaption>
+</figure>
 
 ### Classify-and-act（分类并行动）
 
