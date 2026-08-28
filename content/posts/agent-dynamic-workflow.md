@@ -77,6 +77,8 @@ workflows可以把plan的过程放到代码里面，可以精心的把上面提�
 
 ![Dynamic Workflows 常见模式总览](/images/agent-dynamic-workflow-patterns.png)
 
+（图片转载自 Thariq (@trq212) 的[推文](https://x.com/trq212/status/2061907337154367865)，原文见 [Claude 官方博客](https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code)）
+
 ### Classify-and-act（分类并行动）
 
 用一个分类（classifier）agent 判断任务的类型，然后根据任务类型把任务路由（route）给不同的 agents，或选择不同的行为分支；也可以把分类器放在最后，用来决定如何输出结果。
