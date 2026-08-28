@@ -8,6 +8,28 @@ draft = false
 
 Anthropic 在 Claude Code v2.1.154 版本之后发布了Dynamic Workflows的特性，一个Dynamic Workflow脚本会编排很多subagents去并行的处理事情，这段脚本会由一个运行时去执行
 
+### 示例 Prompts
+
+我们可以通过一些例子来看dynamic workflows可以做什么，以下是Claude Code团队推荐的一些常用的prompt
+
+> "这个测试大概每 50 次运行就会失败 1 次。设置一个 workflow 来复现它。针对这个竞态（race）问题提出几种相互竞争的假设，并且不要停下来，直到有一个假设经受住证据的检验。"
+
+> "用一个 workflow 翻看我最近 50 个会话，挖掘出我反复犯的错误，并把反复出现的那些整理成 CLAUDE.md 里的规则。"
+
+> "用一个 workflow 翻阅 Slack 里过去六个月的 #incidents 频道，找出反复出现但还没人提交工单的根因。"
+
+> "拿我的商业计划书跑一个 workflow，让不同的 agents 分别从投资人、客户、竞争对手的视角把它批得体无完肤。"
+
+> "这里有一个装着 80 份简历的文件夹，用一个 workflow 为后端岗位给它们排序，并复核前十名。然后使用 AskUserQuestion 工具对我进行面试，以确定评分标准（rubric）。"
+
+> "我需要给这个 CLI 工具起个名字。用一个 workflow 头脑风暴出一堆候选名字，然后跑一个锦标赛式的淘汰赛，选出前 3 名。"
+
+> "用一个 workflow 把我们的 User 模型在所有地方统一重命名为 Account。"
+
+> "用一个 workflow 检查我的博客草稿，把每一个技术论断都和代码库对照核实，我可不想发布任何有错的内容。"
+
+来源：[Claude 官方博客 · A Harness for Every Task: Dynamic Workflows in Claude Code](https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code)
+
 ## 什么时候需要 Dynamic Workflows
 
 如果你的任务非常复杂，需要非常多的subagents协同完成，比如对超大代码仓进行迁移、开放性研究问题交叉验证之后给出结论等，都可以尝试dynamic workflows。
@@ -44,28 +66,6 @@ workflows可以把plan的过程放到代码里面，可以精心的把上面提�
 一个workflow最适合这样的任务：任务大到单个agent的上下文装不下，或者同一个步骤需要在许多条目上重复执行。下面的prompt展示了常见的几种形态。每一个prompt都是让Claude为该任务编写并运行一个workflow——脚本不是你自己写的，而是Claude写的。
 
 特别值得了解的一点是：dynamic workflows 可以决定每个 agent 使用哪个模型，以及 subagents 是否在各自独立的工作树（worktree）中运行——这让 Claude 能按需选择所需的智能水平和隔离程度。
-
-## 示例 Prompts
-
-在深入技术细节之前，先看几个示例 prompt，感受一下 workflow 能做什么：
-
-> "这个测试大概每 50 次运行就会失败 1 次。设置一个 workflow 来复现它。针对这个竞态（race）问题提出几种相互竞争的假设，并且不要停下来，直到有一个假设经受住证据的检验。"
-
-> "用一个 workflow 翻看我最近 50 个会话，挖掘出我反复犯的错误，并把反复出现的那些整理成 CLAUDE.md 里的规则。"
-
-> "用一个 workflow 翻阅 Slack 里过去六个月的 #incidents 频道，找出反复出现但还没人提交工单的根因。"
-
-> "拿我的商业计划书跑一个 workflow，让不同的 agents 分别从投资人、客户、竞争对手的视角把它批得体无完肤。"
-
-> "这里有一个装着 80 份简历的文件夹，用一个 workflow 为后端岗位给它们排序，并复核前十名。然后使用 AskUserQuestion 工具对我进行面试，以确定评分标准（rubric）。"
-
-> "我需要给这个 CLI 工具起个名字。用一个 workflow 头脑风暴出一堆候选名字，然后跑一个锦标赛式的淘汰赛，选出前 3 名。"
-
-> "用一个 workflow 把我们的 User 模型在所有地方统一重命名为 Account。"
-
-> "用一个 workflow 检查我的博客草稿，把每一个技术论断都和代码库对照核实，我可不想发布任何有错的内容。"
-
-来源：[Claude 官方博客 · A Harness for Every Task: Dynamic Workflows in Claude Code](https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code)
 
 ## 使用 Dynamic Workflows 的常用模式
 
