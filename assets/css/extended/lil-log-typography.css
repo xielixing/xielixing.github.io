@@ -59,12 +59,13 @@ body {
   font-size: 0.78em;
 }
 
-/* Blockquote: her tighter 3px rule. */
+/* Blockquote: her tighter 3px rule, but with a softer gray bar instead
+   of the near-black --primary (user: black bar looks ugly). */
 .post-content blockquote,
 .md-content blockquote {
   margin: 20px 0;
   padding: 0 14px;
-  border-inline-start: 3px solid var(--primary);
+  border-inline-start: 3px solid var(--secondary);
 }
 
 /* Tables: readable at the smaller base size. */
