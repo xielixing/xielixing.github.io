@@ -1,0 +1,192 @@
+/* Light-theme code block palette.
+   PaperMod ships a dark Catppuccin chroma palette (chroma-styles.css) and a
+   near-black --code-block-bg in light mode, which looks out of place on a
+   white page. Defaults keep the dark palette as fallback; light theme
+   switches the block background and token colors to a GitHub-light scheme
+   via CSS variables. Dark theme is left untouched. */
+
+.chroma .bg {
+    color: var(--s-fg, #cad3f5);
+    background-color: var(--s-bg, #24273a);
+}
+.chroma .err {
+    color: var(--s-err, #ed8796);
+}
+.chroma .lnt,
+.chroma .ln {
+    color: var(--s-ln, #8087a2);
+}
+.chroma .hl {
+    background-color: var(--s-hl, #474733);
+}
+.chroma .k,
+.chroma .kp,
+.chroma .kr,
+.chroma .nt {
+    color: var(--s-k, #c6a0f6);
+}
+.chroma .kc {
+    color: var(--s-kc, #f5a97f);
+}
+.chroma .kd,
+.chroma .kt {
+    color: var(--s-kd, #ed8796);
+}
+.chroma .kn,
+.chroma .ni,
+.chroma .sr {
+    color: var(--s-kn, #8bd5ca);
+}
+.chroma .na {
+    color: var(--s-na, #8aadf4);
+}
+.chroma .nd {
+    color: var(--s-na, #8aadf4);
+    font-weight: bold;
+}
+.chroma .nb,
+.chroma .bp,
+.chroma .nl {
+    color: var(--s-nb, #91d7e3);
+}
+.chroma .nc,
+.chroma .no {
+    color: var(--s-nc, #eed49f);
+}
+.chroma .ne,
+.chroma .nn,
+.chroma .py {
+    color: var(--s-ne, #f5a97f);
+}
+.chroma .nf,
+.chroma .fm {
+    color: var(--s-nf, #8aadf4);
+}
+.chroma .nv,
+.chroma .vc,
+.chroma .vg,
+.chroma .vi,
+.chroma .vm {
+    color: var(--s-nv, #f4dbd6);
+}
+.chroma .s,
+.chroma .sa,
+.chroma .sb,
+.chroma .sc,
+.chroma .s1,
+.chroma .s2,
+.chroma .sh,
+.chroma .si,
+.chroma .sx,
+.chroma .ss {
+    color: var(--s-s, #a6da95);
+}
+.chroma .dl {
+    color: var(--s-dl, #8aadf4);
+}
+.chroma .sd {
+    color: var(--s-sd, #6e738d);
+}
+.chroma .se {
+    color: var(--s-se, #8aadf4);
+}
+.chroma .m,
+.chroma .mb,
+.chroma .mf,
+.chroma .mh,
+.chroma .mi,
+.chroma .il,
+.chroma .mo {
+    color: var(--s-m, #f5a97f);
+}
+.chroma .o,
+.chroma .ow {
+    color: var(--s-o, #91d7e3);
+}
+.chroma .c,
+.chroma .ch,
+.chroma .cm,
+.chroma .c1,
+.chroma .cs,
+.chroma .cp {
+    color: var(--s-c, #6e738d);
+}
+.chroma .cpf {
+    color: var(--s-cpf, #6e738d);
+    font-weight: bold;
+}
+.chroma .gd {
+    color: var(--s-gd, #ed8796);
+    background-color: var(--s-gdbg, #363a4f);
+}
+.chroma .gi {
+    color: var(--s-gi, #a6da95);
+    background-color: var(--s-gibg, #363a4f);
+}
+.chroma .ge {
+    font-style: italic;
+}
+.chroma .gr,
+.chroma .gt {
+    color: var(--s-gr, #ed8796);
+}
+.chroma .gh,
+.chroma .gu {
+    color: var(--s-gh, #f5a97f);
+}
+.chroma .gs {
+    font-weight: bold;
+}
+.chroma .gl {
+    text-decoration: underline;
+}
+
+/* Light theme: light background + GitHub-light token colors */
+:root[data-theme="light"] .chroma {
+    --s-bg: #f5f5f5;
+    --s-fg: #24292f;
+    --s-err: #cf222e;
+    --s-ln: #6a737d;
+    --s-hl: #fffbdd;
+    --s-k: #d73a49;
+    --s-kc: #0550ae;
+    --s-kd: #d73a49;
+    --s-kn: #cf222e;
+    --s-na: #953800;
+    --s-nb: #8250df;
+    --s-nc: #953800;
+    --s-ne: #cf222e;
+    --s-nf: #8250df;
+    --s-ni: #24292f;
+    --s-nv: #953800;
+    --s-s: #0a3069;
+    --s-dl: #0a3069;
+    --s-sd: #6a737d;
+    --s-se: #0550ae;
+    --s-m: #0550ae;
+    --s-o: #0550ae;
+    --s-c: #6a737d;
+    --s-cpf: #0550ae;
+    --s-gd: #cf222e;
+    --s-gdbg: #ffebe9;
+    --s-gi: #116329;
+    --s-gibg: #dafbe1;
+    --s-gr: #cf222e;
+    --s-gh: #0550ae;
+    color: #24292f;
+}
+
+/* The theme forces a near-black --code-block-bg with !important on the
+   highlight wrapper and pre code; override both in light mode. */
+:root[data-theme="light"] .chroma,
+:root[data-theme="light"] .md-content .highlight:not(table),
+:root[data-theme="light"] .md-content pre code,
+:root[data-theme="light"] .post-content .highlight:not(table),
+:root[data-theme="light"] .post-content pre code {
+    background-color: #f5f5f5 !important;
+}
+
+:root[data-theme="light"] .md-content pre code,
+:root[data-theme="light"] .post-content pre code {
+    color: #24292f;
+}
