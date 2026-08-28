@@ -12,6 +12,18 @@ Anthropic 在 Claude Code v2.1.154 版本之后发布了Dynamic Workflows的特�
 
 使用Dynamic Workflow的场景通常是你需要的任务过于复杂，需要很多个subagents协同工作才可以完成，比如你需要对一个超大的代码仓进行迁移，开放性研究问题需要交叉验证等
 
+### 为什么需要 Dynamic Workflows
+
+当你让默认的 Claude Code harness 执行任务时，它需要在同一个上下文窗口里同时完成规划和执行。对很多编码任务来说，这种做法非常高效；但在长时间运行、大规模并行、高度结构化或对抗性的任务上，它可能会失效。
+
+这是因为 Claude 在单个上下文窗口里处理复杂任务的时间越长，就越容易陷入几种特定的失败模式：
+
+- **Agentic laziness（代理惰性）**：Claude 在处理某个特别复杂的多部分任务时，可能在只完成部分进度后就宣告任务完成，例如一次安全审计有 50 个条目，它只处理了 35 个就停了。
+- **Self-preferential bias（自我偏好偏差）**：Claude 倾向于偏爱自己的结果或发现，尤其是当它被要求按评分标准（rubric）核验或评判自己的产出时。
+- **Goal drift（目标漂移）**：在跨越很多轮次的运行中，对原始目标的忠实度会逐渐丢失，尤其是在上下文压缩（compaction）之后。每一次摘要（summarization）都是有损的，像边界情况的需求或「不要做 X」这类约束，可能会在这个过程中丢失。
+
+创建 workflow 正是对抗这些失败模式的方式：编排多个拥有各自上下文窗口、目标聚焦且相互隔离的 Claude subagents。
+
 ## 和其他 Agent 能力的区别
 
 | | Subagents | Skills | Agent teams | Workflows |
