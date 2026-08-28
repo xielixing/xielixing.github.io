@@ -104,13 +104,11 @@ body {
   justify-content: flex-end;
 }
 
-/* Only the brand link is fixed at the far left. The theme toggle stays in
-   the header flow (right-aligned) - with a longer brand text than Lil'Log's,
-   a fixed .logo block would float the toggle over the article body. */
-.header-nav .logo > a,
-.nav .logo > a {
+.logo {
+  flex-wrap: inherit;
   position: fixed;
   left: calc((100vw - var(--main-width) - var(--gap) * 2) / 2 - 138px);
+  top: calc((var(--header-height) - 24px) / 2);
   z-index: 10;
 }
 

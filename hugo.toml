@@ -23,6 +23,7 @@ buildExpired = false
   TocSide = "right"
   disableSpecial1stPost = true
   hideMeta = false
+  disableThemeToggle = true
 
   [params.label]
     text = "Lixing's Blog"
