@@ -31,6 +31,8 @@ workflows可以把plan的过程放到代码里面，可以精心的把上面提�
 
 一个workflow最适合这样的任务：任务大到单个agent的上下文装不下，或者同一个步骤需要在许多条目上重复执行。下面的prompt展示了常见的几种形态。每一个prompt都是让Claude为该任务编写并运行一个workflow——脚本不是你自己写的，而是Claude写的。
 
+特别值得了解的一点是：dynamic workflows 可以决定每个 agent 使用哪个模型，以及 subagents 是否在各自独立的工作树（worktree）中运行——这让 Claude 能按需选择所需的智能水平和隔离程度。
+
 ## 示例 Prompts
 
 在深入技术细节之前，先看几个示例 prompt，感受一下 workflow 能做什么：
