@@ -31,6 +31,28 @@ workflows可以把plan的过程放到代码里面，可以精心的把上面提�
 
 一个workflow最适合这样的任务：任务大到单个agent的上下文装不下，或者同一个步骤需要在许多条目上重复执行。下面的prompt展示了常见的几种形态。每一个prompt都是让Claude为该任务编写并运行一个workflow——脚本不是你自己写的，而是Claude写的。
 
+## 示例 Prompts
+
+在深入技术细节之前，先看几个示例 prompt，感受一下 workflow 能做什么：
+
+> "这个测试大概每 50 次运行就会失败 1 次。设置一个 workflow 来复现它。针对这个竞态（race）问题提出几种相互竞争的假设，并且不要停下来，直到有一个假设经受住证据的检验。"
+
+> "用一个 workflow 翻看我最近 50 个会话，挖掘出我反复犯的错误，并把反复出现的那些整理成 CLAUDE.md 里的规则。"
+
+> "用一个 workflow 翻阅 Slack 里过去六个月的 #incidents 频道，找出反复出现但还没人提交工单的根因。"
+
+> "拿我的商业计划书跑一个 workflow，让不同的 agents 分别从投资人、客户、竞争对手的视角把它批得体无完肤。"
+
+> "这里有一个装着 80 份简历的文件夹，用一个 workflow 为后端岗位给它们排序，并复核前十名。然后使用 AskUserQuestion 工具对我进行面试，以确定评分标准（rubric）。"
+
+> "我需要给这个 CLI 工具起个名字。用一个 workflow 头脑风暴出一堆候选名字，然后跑一个锦标赛式的淘汰赛，选出前 3 名。"
+
+> "用一个 workflow 把我们的 User 模型在所有地方统一重命名为 Account。"
+
+> "用一个 workflow 检查我的博客草稿，把每一个技术论断都和代码库对照核实，我可不想发布任何有错的内容。"
+
+来源：[Claude 官方博客 · A Harness for Every Task: Dynamic Workflows in Claude Code](https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code)
+
 ## 如何触发 Dynamic Workflows
 
 在Claude code中使用dynamic workflow给了两种方式：1：使用prompt触发，比如输入：ultracode: audit every API endpoint under src/routes/ for missing auth checks 其中有ultracode或者workflows的这两个关键字的时候会自动触发，2：使用/effort ultracode
