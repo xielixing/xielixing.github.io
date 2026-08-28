@@ -153,3 +153,11 @@ return audits.filter(Boolean)
 | 最多 16 个并发 agents；当 Claude Code 可用的 CPU 较少时数量会更少（包括在受 CPU 限制的容器内） | 限制本地资源的使用 |
 | 在 fan-out（扇出）场景中，与第一个 agent 共享 prompt-cache 前缀的 agents，默认会在第一个 agent 启动后最多 5 秒才开始启动 | 除了第一个 agent 外，其余 agent 都直接读取第一个 agent 缓存好的前缀，而不是各自对未缓存的内容重新处理一遍 |
 | 每次运行最多总共 1,000 个 agents | 防止失控的循环（runaway loops） |
+
+## References
+
+[1] Anthropic. Claude Code 官方文档 · Workflows. [code.claude.com/docs/en/workflows](https://code.claude.com/docs/en/workflows)
+
+[2] Anthropic. A Harness for Every Task: Dynamic Workflows in Claude Code. [claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code](https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code)
+
+[3] Thariq (@trq212). A Harness for Every Task: Dynamic Workflows in Claude Code. [x.com/trq212/status/2061907337154367865](https://x.com/trq212/status/2061907337154367865)
