@@ -107,7 +107,9 @@ body {
 .logo {
   flex-wrap: inherit;
   position: fixed;
-  left: calc((100vw - var(--main-width) - var(--gap) * 2) / 2 - 138px);
+  /* Lil'Log uses -138px, but our brand text is wider, so shift further
+     left to keep the whole block (text + "|") clear of the article column */
+  left: calc((100vw - var(--main-width) - var(--gap) * 2) / 2 - 200px);
   top: calc((var(--header-height) - 24px) / 2);
   z-index: 10;
 }
