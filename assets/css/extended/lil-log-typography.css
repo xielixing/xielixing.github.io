@@ -112,6 +112,18 @@ body {
   z-index: 10;
 }
 
+/* Pipe separator after the fixed brand, like Lil'Log's "Lil'Log |" */
+.logo::after {
+  content: "|";
+  margin-inline-start: 0.55rem;
+  color: var(--secondary);
+}
+
+/* Lil'Log post header: vertical space between the menu row and the title */
+.post-header {
+  margin: 24px auto var(--content-gap);
+}
+
 /* ===== Lil'Log figure captions: gray, centered, auto-numbered ===== */
 .post-content,
 .md-content {
