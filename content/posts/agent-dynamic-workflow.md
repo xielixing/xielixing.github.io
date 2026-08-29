@@ -8,6 +8,8 @@ draft = false
 
 Anthropic 在 Claude Code v2.1.154 版本之后发布了Dynamic Workflows的特性，一个Dynamic Workflow脚本会编排很多subagents去并行的处理事情，这段脚本会由一个运行时去执行
 
+可以有两种使用方式，可以在prompt里加入workflows的关键字或者使用 ultracode 这个effort
+
 ### 示例 Prompts
 
 我们可以通过一些例子来看dynamic workflows可以做什么，以下是Claude Code团队推荐的一些常用的prompt
