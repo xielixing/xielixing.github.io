@@ -59,13 +59,15 @@ body {
   font-size: 0.78em;
 }
 
-/* Blockquote: her tighter 3px rule, but with a softer gray bar instead
-   of the near-black --primary (user: black bar looks ugly). */
+/* Blockquote: standard markdown quote look - light background tint with a
+   light left border (GitHub-style), instead of a solid dark bar. Vars adapt
+   to the light/dark theme automatically. */
 .post-content blockquote,
 .md-content blockquote {
   margin: 20px 0;
-  padding: 0 14px;
-  border-inline-start: 3px solid var(--secondary);
+  padding: 12px 16px;
+  border-inline-start: 3px solid var(--tertiary);
+  background: var(--code-bg);
 }
 
 /* Tables: readable at the smaller base size. */
