@@ -32,7 +32,10 @@ Anthropic 在 Claude Code v2.1.154 版本之后发布了Dynamic Workflows的特�
 
 ## 什么时候需要 Dynamic Workflows
 
-如果你的任务非常复杂，需要非常多的subagents协同完成，比如对超大代码仓进行迁移、开放性研究问题交叉验证之后给出结论等，都可以尝试dynamic workflows。
+可以看出来以上的任务都是一些比较复杂的大型任务，大量的任务意味着大量的上下文，全部放到一个上下文窗口里面会导致注意力稀释，用脚本编排不同的subagent更加具有确定性，换句话说：
+
+1. 编排subagent需要的上下文是零成本的，不占主agent的上下文空间
+2. 每个subagent可以传入的上下文也可以做到非常精确的把控，dynamic workflows非常适合大量subagent并行工作的场景。
 
 ### Dynamic Workflows从根本来说解决了什么问题
 
