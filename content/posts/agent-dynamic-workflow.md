@@ -1,24 +1,24 @@
 +++
-title = 'Dynamic Workflow 介绍'
+title = 'Dynamic Workflows'
 date = 2026-08-27T16:53:28+08:00
 lastmod = 2026-08-31T19:28:00+08:00
 draft = false
 +++
 
-> **一句话总结**：Anthropic 在 Claude Code v2.1.154 版本之后发布了 Dynamic Workflows 的特性——Claude 会为你的任务现场写一段 JavaScript 编排脚本，由运行时在后台执行，脚本派生几十到几百个 subagent 并行干活。它适合「任务大到单个上下文装不下」或「同一步骤要在大量条目上重复」的场景，代价是 token 消耗显著高于普通会话。本文介绍它的原理、用法、常用模式，以及什么时候**不该**用它。
+> Anthropic 在 Claude Code v2.1.154 发布了 Dynamic Workflows [2]——Claude 可以帮你的任务写一段 JavaScript 编排脚本，由运行时在后台执行，这段脚本可以编排几十到几百个 subagent 来并行干活，非常适合复杂任务的场景。
 
-## 从一个真实故事说起
+## 先看几组真实数字
 
-2026 年 5 月底，Anthropic 发布 Dynamic Workflows 时，Bun 作者 Jarred Sumner 展示了一个硬核用例：用 Dynamic Workflows 把 Bun 从 Zig 重写为 Rust——约 75 万行 Rust 代码，从第一个 commit 到 merge 只用了 11 天，合入时 99.8% 的既有测试套件通过 [2]。
+2026 年 5 月底，Anthropic 发布 Dynamic Workflows 时，Claude Code 的创建者 Boris Cherny 在 HN 上被问到「你们内部怎么用它」，他列出了自己过去几周亲手用它做完的事 [4]：
 
-整个工程的编排大致是这样的：
+1. 自主合入 20 多个优化，把 Claude Code 自身的 token 用量降低了约 **15%**；
+2. 把 tree-sitter、color-diff、yoga-layout 等一批 WASM 和 Rust 原生模块移植成 TypeScript，CPU 和内存占用改善了 **2–10 倍**；
+3. 反复定位并修复 flaky tests，让 CI 更快；
+4. 把基于正则的 bash 静态分析迁移到 tree-sitter，误报的权限弹窗减少了 **45%**；
+5. 反复 profiling 并优化启动路径，把 Agent SDK 的启动时间缩短了 **61%**；
+6. 提交 69 个代码简化 PR，删掉了超过 **1 万行**代码。
 
-1. 第一个 workflow 扫描 Zig 代码库，为每个 struct 字段映射出正确的 Rust 生命周期；
-2. 第二个 workflow 派生数百个 agent 并行工作，每个 `.rs` 文件都是对应 `.zig` 文件的行为等价移植，且每个文件配两名 reviewer；
-3. 一个 fix loop 反复驱动构建和测试套件，直到两者全绿；
-4. 移植合入后，一个通宵运行的 workflow 清理多余的数据拷贝，逐条开出 PR 供人终审。
-
-关键不是「模型变聪明了」，而是**一段脚本编排了几百个各带独立上下文窗口的 agent**。这就是本文的主角。
+这些任务领域各异，结构却是同一个：**目标可度量、步骤可拆分、结果可验证**——性能指标、测试套件、CI 都是现成的裁判。每一条背后，都是一段 workflow 脚本在调度一批 agent 分头干活。抓住这个结构，就抓住了理解 Dynamic Workflows 的钥匙。
 
 ## 什么是 Dynamic Workflows
 
@@ -187,7 +187,7 @@ Workflow 在后台运行，会话保持可用。用 `/workflows` 打开进度视
 
 HN 上对这项特性最大的批评是「token 焚烧炉」：让一群 agent 互相 review、反复循环，更像是在烧钱而不是解决问题 [4]。这个批评有道理，但展开看会发现，真正决定值不值的不是 agent 数量，而是**任务有没有清晰的验证标准**。
 
-Bun 重写之所以成立，不是因为 agent 多，而是因为裁判是现成的：75 万行代码的行为等价性，由 99.8% 通过的既有测试套件来裁决。官方团队的内部用法也是同一个结构——CI 提速、flaky test 修复、SDK 启动时间优化 61%、69 个删掉上万行代码的简化 PR——全都是「有编译器、测试或性能指标兜底」的任务 [4]。反过来，如果任务没有机械的验证标准，几百个 agent 只会把一份「不确定」放大成几十份昂贵的不确定。
+开头那组官方内部用例之所以成立，不是因为 agent 多，而是因为裁判是现成的：token 用量降了几成、SDK 启动快了多少、CI 有没有变绿、删掉了多少行代码，全都是可以机械度量的指标 [4]。反过来，如果任务没有机械的验证标准，几百个 agent 只会把一份「不确定」放大成几十份昂贵的不确定。
 
 所以我的判断标准是：**任务可机械验证、规模大且重复、步骤结构清晰，三者占其二就值得上 workflow**。一次性小任务直接对话更快；需要频繁人工介入的探索性工作则要谨慎——运行中途无法注入你的想法是硬伤，这意味着 prompt 的质量必须前置投入，而不是边跑边调。
 
