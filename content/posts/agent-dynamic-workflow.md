@@ -5,7 +5,7 @@ lastmod = 2026-08-31T19:28:00+08:00
 draft = false
 +++
 
-> Anthropic 在 Claude Code v2.1.154 发布了 Dynamic Workflows [2]——Claude 可以帮你的任务写一段 JavaScript 编排脚本，由运行时在后台执行，这段脚本可以编排几十到几百个 subagent 来并行干活，非常适合复杂任务的场景。
+> Anthropic 在 Claude Code v2.1.154 发布了 Dynamic Workflows [\[2\]](#ref-2)——Claude 可以帮你的任务写一段 JavaScript 编排脚本，由运行时在后台执行，这段脚本可以编排几十到几百个 subagent 来并行干活，非常适合复杂任务的场景。
 
 ## 先看几组真实数字
 
@@ -14,7 +14,7 @@ draft = false
   <figcaption>图片转载自 Thariq (@trq212) 的<a href="https://x.com/trq212/status/2061907337154367865">原帖</a>，与 <a href="https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code">Claude 官方博客</a>同文</figcaption>
 </figure>
 
-2026 年 5 月底，Anthropic 发布 Dynamic Workflows 时，Claude Code 的创建者 Boris Cherny 在 HN 上被问到「你们内部怎么用它」，他列出了自己过去几周亲手用它做完的事 [4]：
+2026 年 5 月底，Anthropic 发布 Dynamic Workflows 时，Claude Code 的创建者 Boris Cherny 在 HN 上被问到「你们内部怎么用它」，他列出了自己过去几周亲手用它做完的事 [\[4\]](#ref-4)：
 
 1. 自主合入 20 多个优化，把 Claude Code 自身的 token 用量降低了约 **15%**；
 2. 把 tree-sitter、color-diff、yoga-layout 等一批 WASM 和 Rust 原生模块移植成 TypeScript，CPU 和内存占用改善了 **2–10 倍**；
@@ -27,7 +27,7 @@ draft = false
 
 ## 什么是 Dynamic Workflows
 
-一个 Dynamic Workflow 就是一段 JavaScript 脚本：你描述任务，Claude 现场写出编排脚本，运行时（runtime）在后台执行它，脚本再派生大量 subagent 并行处理。与在会话里手动派生 subagent 不同，**编排逻辑本身不占 Claude 的上下文——它就在代码里**。该特性对所有付费计划开放（Pro 需在 `/config` 里手动开启）[1]。
+一个 Dynamic Workflow 就是一段 JavaScript 脚本：你描述任务，Claude 现场写出编排脚本，运行时（runtime）在后台执行它，脚本再派生大量 subagent 并行处理。与在会话里手动派生 subagent 不同，**编排逻辑本身不占 Claude 的上下文——它就在代码里**。该特性对所有付费计划开放（Pro 需在 `/config` 里手动开启）[\[1\]](#ref-1)。
 
 脚本保存在 `.claude/workflows/` 下，长这样（官方文档示例）：
 
@@ -92,7 +92,7 @@ Dynamic Workflow 的做法是把「计划」物化成代码：循环、分支、
 
 来源：[Claude Code 官方文档 · Workflows](https://code.claude.com/docs/en/workflows)
 
-Claude Code 维护者 Boris Cherny 的总结很精炼：与 agent teams 相比，workflow 一是可以支撑多 1–2 个数量级的并行 agent，二是以分阶段、半结构化的方式推进工作 [4]。一句话记忆：**Subagents 是「派工人」，Skills 是「发操作手册」，Agent teams 是「组个班组」，Workflow 是「写一段程序，让工人们按程序干」**。
+Claude Code 维护者 Boris Cherny 的总结很精炼：与 agent teams 相比，workflow 一是可以支撑多 1–2 个数量级的并行 agent，二是以分阶段、半结构化的方式推进工作 [\[4\]](#ref-4)。一句话记忆：**Subagents 是「派工人」，Skills 是「发操作手册」，Agent teams 是「组个班组」，Workflow 是「写一段程序，让工人们按程序干」**。
 
 ## 上手：触发、运行、复用
 
@@ -151,7 +151,7 @@ Workflow 在后台运行，会话保持可用。用 `/workflows` 打开进度视
 
 ### 示例 Prompts
 
-以下是 Claude Code 团队在博客里给出的一些典型任务描述 [3]：
+以下是 Claude Code 团队在博客里给出的一些典型任务描述 [\[3\]](#ref-3)：
 
 | 场景 | Prompt |
 | --- | --- |
@@ -168,13 +168,13 @@ Workflow 在后台运行，会话保持可用。用 `/workflows` 打开进度视
 
 ### 成本：先泼一盆冷水
 
-官方明确说 workflow 的消耗会「meaningfully more than a typical session」[1]——一次运行可能相当于普通会话几倍甚至几十倍的 token。
+官方明确说 workflow 的消耗会「meaningfully more than a typical session」[\[1\]](#ref-1)——一次运行可能相当于普通会话几倍甚至几十倍的 token。
 
 - 进度面板会在 agent 超过 25 个、或预估 token 超过 150 万时给出 `Large workflow` 警告（只是提醒，不会拦截）；
 - 可以用 size guideline 控制规模：`small`（<5 个 agent）、`medium`（<15，默认）、`large`（<50）；
 - 省 token 的实践：先在小范围试跑（一个目录而不是整仓）、给 fan-out 阶段指定更小的模型、明确告诉 Claude 哪些步骤不需要最强模型。
 
-社区里的真实翻车案例 [4]：有人在 5x Max 计划上跑出一个 62 个 Opus 1M subagent 的 workflow，约 5 小时的额度 18 分钟烧完；也有人 review 一个不大的包被派出 90 个 agent，第一次打满了 Claude Max 的用量上限。
+社区里的真实翻车案例 [\[4\]](#ref-4)：有人在 5x Max 计划上跑出一个 62 个 Opus 1M subagent 的 workflow，约 5 小时的额度 18 分钟烧完；也有人 review 一个不大的包被派出 90 个 agent，第一次打满了 Claude Max 的用量上限。
 
 ### 限制
 
@@ -190,9 +190,9 @@ Workflow 在后台运行，会话保持可用。用 `/workflows` 打开进度视
 
 ## 我的看法
 
-HN 上对这项特性最大的批评是「token 焚烧炉」：让一群 agent 互相 review、反复循环，更像是在烧钱而不是解决问题 [4]。这个批评有道理，但展开看会发现，真正决定值不值的不是 agent 数量，而是**任务有没有清晰的验证标准**。
+HN 上对这项特性最大的批评是「token 焚烧炉」：让一群 agent 互相 review、反复循环，更像是在烧钱而不是解决问题 [\[4\]](#ref-4)。这个批评有道理，但展开看会发现，真正决定值不值的不是 agent 数量，而是**任务有没有清晰的验证标准**。
 
-开头那组官方内部用例之所以成立，不是因为 agent 多，而是因为裁判是现成的：token 用量降了几成、SDK 启动快了多少、CI 有没有变绿、删掉了多少行代码，全都是可以机械度量的指标 [4]。反过来，如果任务没有机械的验证标准，几百个 agent 只会把一份「不确定」放大成几十份昂贵的不确定。
+开头那组官方内部用例之所以成立，不是因为 agent 多，而是因为裁判是现成的：token 用量降了几成、SDK 启动快了多少、CI 有没有变绿、删掉了多少行代码，全都是可以机械度量的指标 [\[4\]](#ref-4)。反过来，如果任务没有机械的验证标准，几百个 agent 只会把一份「不确定」放大成几十份昂贵的不确定。
 
 所以我的判断标准是：**任务可机械验证、规模大且重复、步骤结构清晰，三者占其二就值得上 workflow**。一次性小任务直接对话更快；需要频繁人工介入的探索性工作则要谨慎——运行中途无法注入你的想法是硬伤，这意味着 prompt 的质量必须前置投入，而不是边跑边调。
 
@@ -202,12 +202,12 @@ HN 上对这项特性最大的批评是「token 焚烧炉」：让一群 agent �
 
 ## References
 
-[1] Anthropic. Claude Code 官方文档 · Orchestrate subagents at scale with dynamic workflows. [code.claude.com/docs/en/workflows](https://code.claude.com/docs/en/workflows)
+<a id="ref-1"></a>[1] Anthropic. Claude Code 官方文档 · Orchestrate subagents at scale with dynamic workflows. [code.claude.com/docs/en/workflows](https://code.claude.com/docs/en/workflows)
 
-[2] Anthropic. Introducing dynamic workflows in Claude Code. 2026-05-28. [claude.com/blog/introducing-dynamic-workflows-in-claude-code](https://claude.com/blog/introducing-dynamic-workflows-in-claude-code)
+<a id="ref-2"></a>[2] Anthropic. Introducing dynamic workflows in Claude Code. 2026-05-28. [claude.com/blog/introducing-dynamic-workflows-in-claude-code](https://claude.com/blog/introducing-dynamic-workflows-in-claude-code)
 
-[3] Anthropic. A harness for every task: dynamic workflows in Claude Code. [claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code](https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code)
+<a id="ref-3"></a>[3] Anthropic. A harness for every task: dynamic workflows in Claude Code. [claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code](https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code)
 
-[4] Hacker News. Dynamic Workflows in Claude Code（200 points · 135 条讨论）. [news.ycombinator.com/item?id=48311705](https://news.ycombinator.com/item?id=48311705)
+<a id="ref-4"></a>[4] Hacker News. Dynamic Workflows in Claude Code（200 points · 135 条讨论）. [news.ycombinator.com/item?id=48311705](https://news.ycombinator.com/item?id=48311705)
 
-[5] Thariq (@trq212). Dynamic Workflows 模式总览图. [x.com/trq212/status/2061907337154367865](https://x.com/trq212/status/2061907337154367865)
+<a id="ref-5"></a>[5] Thariq (@trq212). Dynamic Workflows 模式总览图. [x.com/trq212/status/2061907337154367865](https://x.com/trq212/status/2061907337154367865)
