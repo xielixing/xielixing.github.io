@@ -68,7 +68,7 @@ buildExpired = false
   unsafe = true
 
 [markup.highlight]
-  lineNos = true
+  lineNos = false
   codeFences = true
   guessSyntax = true
   noClasses = false
