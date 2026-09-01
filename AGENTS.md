@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Notes for AI agents (and humans) working in this repo. Last updated: 2026-07-30.
+Notes for AI agents (and humans) working in this repo. Last updated: 2026-09-01.
 
 ## What this repo is
 
@@ -66,6 +66,18 @@ GitHub Actions auto-builds and deploys. Takes ~30s. Watch with:
 gh run list --workflow=hugo.yml --limit 3
 gh run watch <run-id> --exit-status
 ```
+
+### Force push directly after edits (repo-specific policy)
+
+**This is a personal blog — force pushing to `main` is expected and pre-approved.** When the user asks for changes (posts, config, workflow, AGENTS.md itself), make the edit, commit, and immediately push without asking for confirmation:
+
+```powershell
+git add -A
+git commit -m "post: <short description>"
+git push --force-with-lease origin main
+```
+
+Use `--force-with-lease` as the default (it is a force push with a stale-remote check); fall back to plain `git push --force origin main` if the lease is rejected. Rationale: solo blog, `main` is the only branch, remote history may diverge from edits made on other machines/agents, and the deploy workflow simply rebuilds from whatever lands on `main` — a force push here is safe and self-healing. This overrides the usual "never force push" default for this repo. Still never push built HTML or edit the PaperMod submodule.
 
 ## Deployment mechanism
 
