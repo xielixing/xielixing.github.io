@@ -1,29 +1,22 @@
 +++
 title = 'Dynamic Workflows'
 date = 2026-08-27T16:53:28+08:00
-lastmod = 2026-08-31T19:28:00+08:00
+lastmod = 2026-09-01T15:15:00+08:00
 draft = false
 +++
 
 > Anthropic 在 Claude Code v2.1.154 发布了 Dynamic Workflows [\[2\]](#ref-2)——Claude 可以帮你的任务写一段 JavaScript 编排脚本，由运行时在后台执行，这段脚本可以编排几十到几百个 subagent 来并行干活，非常适合复杂任务的场景。
 
-## 先看几组真实数字
+## 适合的场景
+
+这是 Claude 的博客里面给出的一些 use case，在代码和非代码的场景用途都十分广泛：
 
 <figure>
   <img src="/images/agent-dynamic-workflow-usecases.png" alt="Dynamic Workflows 原帖 Use cases 一节的配图">
   <figcaption>图片转载自 Thariq (@trq212) 的<a href="https://x.com/trq212/status/2061907337154367865">原帖</a>，与 <a href="https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code">Claude 官方博客</a>同文</figcaption>
 </figure>
 
-2026 年 5 月底，Anthropic 发布 Dynamic Workflows 时，Claude Code 的创建者 Boris Cherny 在 HN 上被问到「你们内部怎么用它」，他列出了自己过去几周亲手用它做完的事 [\[4\]](#ref-4)：
 
-1. 自主合入 20 多个优化，把 Claude Code 自身的 token 用量降低了约 **15%**；
-2. 把 tree-sitter、color-diff、yoga-layout 等一批 WASM 和 Rust 原生模块移植成 TypeScript，CPU 和内存占用改善了 **2–10 倍**；
-3. 反复定位并修复 flaky tests，让 CI 更快；
-4. 把基于正则的 bash 静态分析迁移到 tree-sitter，误报的权限弹窗减少了 **45%**；
-5. 反复 profiling 并优化启动路径，把 Agent SDK 的启动时间缩短了 **61%**；
-6. 提交 69 个代码简化 PR，删掉了超过 **1 万行**代码。
-
-这些任务领域各异，结构却是同一个：**目标可度量、步骤可拆分、结果可验证**——性能指标、测试套件、CI 都是现成的裁判。每一条背后，都是一段 workflow 脚本在调度一批 agent 分头干活。抓住这个结构，就抓住了理解 Dynamic Workflows 的钥匙。
 
 ## 什么是 Dynamic Workflows
 
