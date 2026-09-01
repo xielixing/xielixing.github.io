@@ -9,6 +9,11 @@ draft = false
 
 ## 先看几组真实数字
 
+<figure>
+  <img src="/images/agent-dynamic-workflow-usecases.png" alt="Dynamic Workflows 原帖 Use cases 一节的配图">
+  <figcaption>图片转载自 Thariq (@trq212) 的<a href="https://x.com/trq212/status/2061907337154367865">原帖</a>，与 <a href="https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code">Claude 官方博客</a>同文</figcaption>
+</figure>
+
 2026 年 5 月底，Anthropic 发布 Dynamic Workflows 时，Claude Code 的创建者 Boris Cherny 在 HN 上被问到「你们内部怎么用它」，他列出了自己过去几周亲手用它做完的事 [4]：
 
 1. 自主合入 20 多个优化，把 Claude Code 自身的 token 用量降低了约 **15%**；
