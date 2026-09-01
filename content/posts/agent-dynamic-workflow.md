@@ -1,7 +1,7 @@
 +++
 title = 'Dynamic Workflows'
 date = 2026-08-27T16:53:28+08:00
-lastmod = 2026-09-01T15:15:00+08:00
+lastmod = 2026-09-01T15:45:00+08:00
 draft = false
 +++
 
@@ -9,7 +9,7 @@ draft = false
 
 ## 适合的场景
 
-这是 Claude 的博客里面给出的一些 use case，在代码和非代码的场景用途都十分广泛：
+这是 Claude 的博客里面给出的一些 use case：
 
 <figure>
   <img src="/images/agent-dynamic-workflow-usecases.png" alt="Dynamic Workflows 原帖 Use cases 一节的配图">
@@ -20,7 +20,7 @@ draft = false
 
 ## 什么是 Dynamic Workflows
 
-一个 Dynamic Workflow 就是一段 JavaScript 脚本：你描述任务，Claude 现场写出编排脚本，运行时（runtime）在后台执行它，脚本再派生大量 subagent 并行处理。与在会话里手动派生 subagent 不同，**编排逻辑本身不占 Claude 的上下文——它就在代码里**。该特性对所有付费计划开放（Pro 需在 `/config` 里手动开启）[\[1\]](#ref-1)。
+一个 Dynamic Workflow 就是一段 JavaScript 脚本：你描述任务，Claude 写出编排脚本，运行时（runtime）在后台执行它，通过调用大量 subagent 并行处理。skill 当然也可以使用自然语言去派生大量的 subagents，但是编排本身就需要消耗上下文，并且不能保证每个subagents传入的上下文足够准确，后面会举例子来说明这点。
 
 脚本保存在 `.claude/workflows/` 下，长这样（官方文档示例）：
 
@@ -144,18 +144,18 @@ Workflow 在后台运行，会话保持可用。用 `/workflows` 打开进度视
 
 ### 示例 Prompts
 
-以下是 Claude Code 团队在博客里给出的一些典型任务描述 [\[3\]](#ref-3)：
+以下 Prompt 全部逐字引自一手来源——官方文档 [\[1\]](#ref-1) 与 Thariq 的原帖 [\[3\]](#ref-3)——保留英文原文，可直接粘贴使用；每条标注它演示的是上面哪种模式（可组合）：
 
-| 场景 | Prompt |
-| --- | --- |
-| 复现竞态 | 「这个测试大概每 50 次运行就会失败 1 次。设置一个 workflow 来复现它。针对这个竞态（race）问题提出几种相互竞争的假设，并且不要停下来，直到有一个假设经受住证据的检验。」 |
-| 挖掘个人习惯 | 「用一个 workflow 翻看我最近 50 个会话，挖掘出我反复犯的错误，并把反复出现的那些整理成 CLAUDE.md 里的规则。」 |
-| 工单挖掘 | 「用一个 workflow 翻阅 Slack 里过去六个月的 #incidents 频道，找出反复出现但还没人提交工单的根因。」 |
-| 多视角评审 | 「拿我的商业计划书跑一个 workflow，让不同的 agents 分别从投资人、客户、竞争对手的视角把它批得体无完肤。」 |
-| 简历筛选 | 「这里有一个装着 80 份简历的文件夹，用一个 workflow 为后端岗位给它们排序，并复核前十名。然后使用 AskUserQuestion 工具对我进行面试，以确定评分标准（rubric）。」 |
-| 命名锦标赛 | 「我需要给这个 CLI 工具起个名字。用一个 workflow 头脑风暴出一堆候选名字，然后跑一个锦标赛式的淘汰赛，选出前 3 名。」 |
-| 大规模重命名 | 「用一个 workflow 把我们的 User 模型在所有地方统一重命名为 Account。」 |
-| 博客事实核查 | 「用一个 workflow 检查我的博客草稿，把每一个技术论断都和代码库对照核实，我可不想发布任何有错的内容。」 |
+| 场景 | 演示的模式 | Prompt 原文 |
+| --- | --- | --- |
+| 审计大量文件的同一类问题 | Fan-out + Adversarial verification | use a workflow to audit every route handler under src/routes/ for missing authentication checks, and adversarially verify each finding before reporting it |
+| 修复直到检查通过 | Loop until done | use a workflow to run npx tsc --noEmit and keep fixing the reported errors until the type check passes or two rounds in a row make no progress |
+| 复现竞态条件 | Loop until done + Adversarial verification | This test fails maybe 1 in 50 runs. Set up a workflow to reproduce it, form theories and adversarially test them in worktrees /goal don't stop until one theory works. |
+| 大规模并行迁移 | Fan-out-and-synthesize | use a workflow to migrate every component under src/components/ from JavaScript to TypeScript, working on each file in its own isolated copy |
+| 逐文件审查并汇总 | Fan-out-and-synthesize | use a workflow to review every file changed in this PR for correctness issues, then merge the per-file findings into one ranked summary |
+| 跨来源调研对比 | Fan-out-and-synthesize | use a workflow to research how our three competitors handle rate limiting: read their public docs and recent changelog entries in parallel, then compare the approaches |
+| 从会话历史提炼规则 | Fan-out-and-synthesize | Using a workflow, go through my last 50 sessions and mine them for corrections I keep making and turn the recurring ones into CLAUDE.md rules |
+| 多视角对抗评审 | Fan-out-and-synthesize | Take my business plan and run a workflow where different agents tear it apart from an investor's, a customer's, and a competitor's perspective. |
 
 ## 成本与限制
 
