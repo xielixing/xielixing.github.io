@@ -1,22 +1,59 @@
 +++
 title = 'Dynamic Workflows'
 date = 2026-08-27T16:53:28+08:00
-lastmod = 2026-09-01T15:45:00+08:00
+lastmod = 2026-09-01T16:05:00+08:00
 draft = false
 +++
 
 > Anthropic 在 Claude Code v2.1.154 发布了 Dynamic Workflows [\[2\]](#ref-2)——Claude 可以帮你的任务写一段 JavaScript 编排脚本，由运行时在后台执行，这段脚本可以编排几十到几百个 subagent 来并行干活，非常适合复杂任务的场景。
 
-## 适合的场景
-
-这是 Claude 的博客里面给出的一些 use case：
+## 常用模式
 
 <figure>
-  <img src="/images/agent-dynamic-workflow-usecases.png" alt="Dynamic Workflows 原帖 Use cases 一节的配图">
-  <figcaption>图片转载自 Thariq (@trq212) 的<a href="https://x.com/trq212/status/2061907337154367865">原帖</a>，与 <a href="https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code">Claude 官方博客</a>同文</figcaption>
+  <img src="/images/agent-dynamic-workflow-patterns.png" alt="Dynamic Workflows 常见模式总览">
+  <figcaption>图片转载自 Thariq (@trq212) 的<a href="https://x.com/trq212/status/2061907337154367865">推文</a>，原文见 <a href="https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code">Claude 官方博客</a></figcaption>
 </figure>
 
+你可以直接让 Claude 建一个 workflow 就开始用；但建立起对工作原理的心智模型，能帮你判断什么时候该用、以及如何用 prompt 引导。下面是六个常见模式，每个都标注了对应的脚本原语——它们可以组合使用：
 
+### Classify-and-act（分类并行动）
+
+用一个分类（classifier）agent 判断任务的类型，然后根据任务类型路由给不同的 agents，或选择不同的行为分支；也可以把分类器放在最后，用来决定如何输出结果。**原语：普通分支逻辑（if/else）。**
+
+### Fan-out-and-synthesize（扇出并汇总）
+
+把任务拆成许多更小的步骤，每个步骤跑一个 agent，最后把结果汇总（synthesize）起来。当小步骤数量很大、或者每个步骤都受益于自己干净的上下文窗口时尤其有用。汇总这一步是一个屏障（barrier）：等所有扇出的 agents 都完成，再把它们的结构化输出合并成一个结果。**原语：pipeline() / parallel() + 一个汇总 agent。**
+
+### Adversarial verification（对抗性验证）
+
+对每个派生的 agent，再派生一个独立的 agent，去对抗性地核验它的输出是否符合评分标准（rubric）或准则。**原语：两层 agent() 调用。**
+
+### Generate-and-filter（生成并筛选）
+
+围绕一个主题生成一批想法，再按评分标准或核验结果筛选、去重（dedupe），只返回质量最高、经过检验的想法。**原语：生成 + schema 评分 + filter() / 排序。**
+
+### Tournament（锦标赛）
+
+不是分工，而是让 agents 同台竞争：派生 N 个 agents，各自用不同的方法尝试同一个任务，再由评判 agent 进行两两对决（pairwise），直到产生赢家。**原语：parallel() + 评委 agent。**
+
+### Loop until done（循环直到完成）
+
+对于工作量未知的任务，循环派生 agents，直到满足某个停止条件（比如没有新的发现、日志里不再有错误、连续两轮无进展）为止，而不是固定跑固定轮数。**原语：while 循环。**
+
+### 示例 Prompts
+
+以下 Prompt 全部逐字引自一手来源——官方文档 [\[1\]](#ref-1) 与 Thariq 的原帖 [\[3\]](#ref-3)——保留英文原文，可直接粘贴使用；每条标注它演示的是上面哪种模式（可组合）：
+
+| 场景 | 演示的模式 | Prompt 原文 |
+| --- | --- | --- |
+| 审计大量文件的同一类问题 | Fan-out + Adversarial verification | use a workflow to audit every route handler under src/routes/ for missing authentication checks, and adversarially verify each finding before reporting it |
+| 修复直到检查通过 | Loop until done | use a workflow to run npx tsc --noEmit and keep fixing the reported errors until the type check passes or two rounds in a row make no progress |
+| 复现竞态条件 | Loop until done + Adversarial verification | This test fails maybe 1 in 50 runs. Set up a workflow to reproduce it, form theories and adversarially test them in worktrees /goal don't stop until one theory works. |
+| 大规模并行迁移 | Fan-out-and-synthesize | use a workflow to migrate every component under src/components/ from JavaScript to TypeScript, working on each file in its own isolated copy |
+| 逐文件审查并汇总 | Fan-out-and-synthesize | use a workflow to review every file changed in this PR for correctness issues, then merge the per-file findings into one ranked summary |
+| 跨来源调研对比 | Fan-out-and-synthesize | use a workflow to research how our three competitors handle rate limiting: read their public docs and recent changelog entries in parallel, then compare the approaches |
+| 从会话历史提炼规则 | Fan-out-and-synthesize | Using a workflow, go through my last 50 sessions and mine them for corrections I keep making and turn the recurring ones into CLAUDE.md rules |
+| 多视角对抗评审 | Fan-out-and-synthesize | Take my business plan and run a workflow where different agents tear it apart from an investor's, a customer's, and a competitor's perspective. |
 
 ## 什么是 Dynamic Workflows
 
@@ -108,54 +145,6 @@ Workflow 在后台运行，会话保持可用。用 `/workflows` 打开进度视
 ### 复用
 
 跑完一次满意的 workflow，在 `/workflows` 里按 `s` 就能把它存成命令：项目级存到 `.claude/workflows/`（随仓库共享），个人级存到 `~/.claude/workflows/`（所有项目可用）。之后在 `/` 自动补全里以 `/<name>` 调用，还可以通过 `args` 传参，比如 `Run /triage-issues on issues 1024, 1025, and 1030`。
-
-## 常用模式
-
-<figure>
-  <img src="/images/agent-dynamic-workflow-patterns.png" alt="Dynamic Workflows 常见模式总览">
-  <figcaption>图片转载自 Thariq (@trq212) 的<a href="https://x.com/trq212/status/2061907337154367865">推文</a>，原文见 <a href="https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code">Claude 官方博客</a></figcaption>
-</figure>
-
-你可以直接让 Claude 建一个 workflow 就开始用；但建立起对工作原理的心智模型，能帮你判断什么时候该用、以及如何用 prompt 引导。下面是六个常见模式，每个都标注了对应的脚本原语——它们可以组合使用：
-
-### Classify-and-act（分类并行动）
-
-用一个分类（classifier）agent 判断任务的类型，然后根据任务类型路由给不同的 agents，或选择不同的行为分支；也可以把分类器放在最后，用来决定如何输出结果。**原语：普通分支逻辑（if/else）。**
-
-### Fan-out-and-synthesize（扇出并汇总）
-
-把任务拆成许多更小的步骤，每个步骤跑一个 agent，最后把结果汇总（synthesize）起来。当小步骤数量很大、或者每个步骤都受益于自己干净的上下文窗口时尤其有用。汇总这一步是一个屏障（barrier）：等所有扇出的 agents 都完成，再把它们的结构化输出合并成一个结果。**原语：pipeline() / parallel() + 一个汇总 agent。**
-
-### Adversarial verification（对抗性验证）
-
-对每个派生的 agent，再派生一个独立的 agent，去对抗性地核验它的输出是否符合评分标准（rubric）或准则。**原语：两层 agent() 调用。**
-
-### Generate-and-filter（生成并筛选）
-
-围绕一个主题生成一批想法，再按评分标准或核验结果筛选、去重（dedupe），只返回质量最高、经过检验的想法。**原语：生成 + schema 评分 + filter() / 排序。**
-
-### Tournament（锦标赛）
-
-不是分工，而是让 agents 同台竞争：派生 N 个 agents，各自用不同的方法尝试同一个任务，再由评判 agent 进行两两对决（pairwise），直到产生赢家。**原语：parallel() + 评委 agent。**
-
-### Loop until done（循环直到完成）
-
-对于工作量未知的任务，循环派生 agents，直到满足某个停止条件（比如没有新的发现、日志里不再有错误、连续两轮无进展）为止，而不是固定跑固定轮数。**原语：while 循环。**
-
-### 示例 Prompts
-
-以下 Prompt 全部逐字引自一手来源——官方文档 [\[1\]](#ref-1) 与 Thariq 的原帖 [\[3\]](#ref-3)——保留英文原文，可直接粘贴使用；每条标注它演示的是上面哪种模式（可组合）：
-
-| 场景 | 演示的模式 | Prompt 原文 |
-| --- | --- | --- |
-| 审计大量文件的同一类问题 | Fan-out + Adversarial verification | use a workflow to audit every route handler under src/routes/ for missing authentication checks, and adversarially verify each finding before reporting it |
-| 修复直到检查通过 | Loop until done | use a workflow to run npx tsc --noEmit and keep fixing the reported errors until the type check passes or two rounds in a row make no progress |
-| 复现竞态条件 | Loop until done + Adversarial verification | This test fails maybe 1 in 50 runs. Set up a workflow to reproduce it, form theories and adversarially test them in worktrees /goal don't stop until one theory works. |
-| 大规模并行迁移 | Fan-out-and-synthesize | use a workflow to migrate every component under src/components/ from JavaScript to TypeScript, working on each file in its own isolated copy |
-| 逐文件审查并汇总 | Fan-out-and-synthesize | use a workflow to review every file changed in this PR for correctness issues, then merge the per-file findings into one ranked summary |
-| 跨来源调研对比 | Fan-out-and-synthesize | use a workflow to research how our three competitors handle rate limiting: read their public docs and recent changelog entries in parallel, then compare the approaches |
-| 从会话历史提炼规则 | Fan-out-and-synthesize | Using a workflow, go through my last 50 sessions and mine them for corrections I keep making and turn the recurring ones into CLAUDE.md rules |
-| 多视角对抗评审 | Fan-out-and-synthesize | Take my business plan and run a workflow where different agents tear it apart from an investor's, a customer's, and a competitor's perspective. |
 
 ## 成本与限制
 
