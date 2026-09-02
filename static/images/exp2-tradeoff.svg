@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="278" viewBox="0 0 660 278" font-family="-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+<rect width="660" height="278" fill="#ffffff"/>
+<text x="24" y="32" font-size="15" font-weight="700" fill="#111827">实验 2 · 收益与代价（5 轮均值）</text>
+<text x="210" y="62" font-size="12.5" fill="#111827" font-weight="600" text-anchor="middle">耗时（秒）</text>
+<rect x="150" y="188.95" width="74" height="29.049999999999997" fill="#D97706" rx="3"/>
+<text x="187" y="181.95" font-size="12" fill="#111827" text-anchor="middle" font-weight="700">166</text>
+<rect x="250" y="85.525" width="74" height="132.475" fill="#2563EB" rx="3"/>
+<text x="287" y="78.525" font-size="12" fill="#111827" text-anchor="middle" font-weight="700">757</text>
+<text x="187" y="236" font-size="11" fill="#6B7280" text-anchor="middle">自然语言</text>
+<text x="287" y="236" font-size="11" fill="#6B7280" text-anchor="middle">Workflow</text>
+<line x1="375" y1="70" x2="375" y2="242" stroke="#E5E7EB" stroke-width="1"/>
+<text x="485" y="62" font-size="12.5" fill="#111827" font-weight="600" text-anchor="middle">全会话 token</text>
+<rect x="425" y="91.89446153846154" width="74" height="126.10553846153846" fill="#D97706" rx="3"/>
+<text x="462" y="84.89446153846154" font-size="12" fill="#111827" text-anchor="middle" font-weight="700">46.8 万</text>
+<rect x="525" y="83.5003846153846" width="74" height="134.4996153846154" fill="#2563EB" rx="3"/>
+<text x="562" y="76.5003846153846" font-size="12" fill="#111827" text-anchor="middle" font-weight="700">50.0 万</text>
+<text x="462" y="236" font-size="11" fill="#6B7280" text-anchor="middle">自然语言</text>
+<text x="562" y="236" font-size="11" fill="#6B7280" text-anchor="middle">Workflow</text>
+<line x1="24" y1="218" x2="636" y2="218" stroke="#E5E7EB" stroke-width="1"/>
+<text x="24" y="262" font-size="11.5" fill="#6B7280">Workflow 用 3–4 倍耗时、约 +7% token，换 100% 合法成功率（NL 4/5，失败轮 2/6 根因后放弃）</text>
+</svg>

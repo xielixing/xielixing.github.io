@@ -1,7 +1,7 @@
 +++
 title = 'Dynamic Workflows'
 date = 2026-08-27T16:53:28+08:00
-lastmod = 2026-09-01T23:30:00+08:00
+lastmod = 2026-09-02T09:25:00+08:00
 draft = false
 +++
 
@@ -202,6 +202,16 @@ HN 上对这项特性最大的批评是「token 焚烧炉」：让一群 agent �
 
 \* 该版本 transcript 不记录 Task 子代理用量，NL 臂总 token 被低估。所以保守结论是：**WF 的全会话总消耗（287k）低于 NL 仅主线程的消耗（370k）**——还不算 NL 那些干活的子代理。
 
+<figure>
+  <img src="/images/exp1-recall.svg" alt="实验 1 交付 recall 点阵：WF 五轮全部 1.0，NL 两轮为 0">
+  <figcaption>交付 recall：WF 五轮钉死 1.0，NL 两轮没交付汇总报告</figcaption>
+</figure>
+
+<figure>
+  <img src="/images/exp1-tokens.svg" alt="实验 1 token 堆叠条：WF 全会话低于 NL 仅主线程">
+  <figcaption>Token 消耗：WF 全会话均值低于 NL 仅主线程均值（NL 子代理用量未被记录，实际更高）</figcaption>
+</figure>
+
 最有意思的是交付 recall 和集体 recall 的分离：**两臂的子代理都全找到了 6 处 bug**，但 NL 编排者在 2/5 的轮次里没把结果合并成交付报告就停了——文章开头说的 agentic laziness，抓了个现行。WF 臂把交付质量钉死在 1.0，且五轮报告的发现集合完全一致（Jaccard=1.0）：脚本保证覆盖，屏障保证汇总。
 
 ### 实验 2：复杂任务修到全绿
@@ -216,7 +226,17 @@ HN 上对这项特性最大的批评是「token 焚烧炉」：让一群 agent �
 | 全会话 token | **468,392** | 499,570 |
 | 耗时 | **166s** | 757s |
 
+<figure>
+  <img src="/images/exp2-outcome.svg" alt="实验 2 每轮结果网格：WF 5/5 全绿，NL 一轮 2/6 后放弃">
+  <figcaption>每轮结果：WF 5/5 全部合规成功；NL 一轮 77 秒后放弃（根因 2/6）</figcaption>
+</figure>
+
 复杂任务上 workflow 依然全胜成功率，NL 臂的失败模式还是老样子：一轮 77 秒后放弃，只修了 2/6。代价也清楚：**WF 慢 3–4 倍、token 略高**——主线程要跑验证循环、消化测试输出，这部分上下文成本脚本省不掉。两臂作弊率都是 0，「对抗验证降作弊率」的假设没有被区分出来，如实报告。另一个意外发现：所有成功轮（两臂都是）的最终 diff 全部是 +6/-6 的外科手术式修复，没有一例打补丁。
+
+<figure>
+  <img src="/images/exp2-tradeoff.svg" alt="实验 2 收益与代价：WF 以 3-4 倍耗时换 100% 合法成功率">
+  <figcaption>收益与代价：耗时 3–4 倍、token +7%，换 100% 合法成功率</figcaption>
+</figure>
 
 ### 实验给判断标准的反愧
 

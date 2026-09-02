@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="252" viewBox="0 0 660 252" font-family="-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+<rect width="660" height="252" fill="#ffffff"/>
+<text x="24" y="32" font-size="15" font-weight="700" fill="#111827">实验 1 · Token 消耗（5 轮均值）</text>
+<text x="155" y="89" font-size="12.5" fill="#111827" text-anchor="end" font-weight="600">自然语言</text>
+<rect x="165" y="72" width="442.83473684210526" height="34" fill="#D97706" rx="3"/>
+<rect x="607.8347368421053" y="72" width="6.085026315789474" height="34" fill="#FDE68A" rx="3"/>
+<text x="386.41736842105263" y="93" font-size="11.5" fill="#ffffff" text-anchor="middle" font-weight="600">主线程 369,840</text>
+<text x="610.87725" y="117" font-size="10.5" fill="#6B7280" text-anchor="middle">子代理 5,082</text>
+<text x="621.9197631578947" y="93" font-size="12" fill="#111827" font-weight="700">374,922</text>
+<text x="155" y="165" font-size="12.5" fill="#111827" text-anchor="end" font-weight="600">Workflow</text>
+<rect x="165" y="148" width="275.2211184210526" height="34" fill="#2563EB" rx="3"/>
+<rect x="440.2211184210526" y="148" width="68.9983552631579" height="34" fill="#BFDBFE" rx="3"/>
+<text x="302.6105592105263" y="169" font-size="11.5" fill="#ffffff" text-anchor="middle" font-weight="600">主线程 229,855</text>
+<text x="474.72029605263157" y="193" font-size="10.5" fill="#6B7280" text-anchor="middle">子代理 57,625</text>
+<text x="517.2194736842105" y="169" font-size="12" fill="#111827" font-weight="700">287,480</text>
+<line x1="613.9197631578947" y1="60" x2="613.9197631578947" y2="196" stroke="#B91C1C" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="619.9197631578947" y="63" font-size="10.5" fill="#B91C1C">NL 全会话</text>
+<text x="165" y="218" font-size="11.5" fill="#6B7280">Workflow 全会话（287,480）＜ 自然语言仅主线程（369,840）——且 NL 的子代理用量未被该版本 transcript 记录，实际更高</text>
+<text x="165" y="236" font-size="11.5" fill="#6B7280">橙色实心 = 主线程；浅色 = 子代理。数据：exp1 五轮均值</text>
+</svg>
