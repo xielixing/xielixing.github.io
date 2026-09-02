@@ -134,7 +134,7 @@ Claude Code 维护者 Boris Cherny 的总结很精炼：与 agent teams 相比�
 | `/effort ultracode` | 会话级开关：之后每个实质任务 Claude 都会自动规划 workflow（叠加 `xhigh` 推理档位），token 消耗和耗时都会明显上升 |
 | 内置 `/deep-research` | 开箱即用的调研工作流：多角度扇出搜索、交叉核验来源、产出带引用的报告 |
 
-注意两点：v2.1.160 之前的触发关键字是 `workflow`；另外在 v2.1.218 实测，`ultracode` 关键字在 `claude -p` 无头模式下同样能触发 workflow（本文实验就是无人值守跑的，见下文），「`-p` 不触发」的说法已过时；但保存的 workflow 用 `/<name>` 调用仍然只在交互式会话里生效。
+注意两点：v2.1.160 之前的触发关键字是 `workflow`；另外在 v2.1.218 实测，`ultracode` 关键字在 `claude -p` 无头模式下同样能触发 workflow，「`-p` 不触发」的说法已过时；但保存的 workflow 用 `/<name>` 调用仍然只在交互式会话里生效。
 
 ### 运行
 
